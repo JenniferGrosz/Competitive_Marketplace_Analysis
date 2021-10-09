@@ -1,0 +1,3735 @@
+---
+title: 'Technical Appendix'
+subtitle: 'Data Visualization Quick Project 2'
+author: "Jennifer Grosz"
+date: "Thursday, August 12th, 2021"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: true
+    number_sections: true
+---
+
+```{r}
+# Course: 5210 Data Visualization
+# Purpose: Technical Appendix for Quick Project 2
+# Date: July 29, 2021
+# Author: Jennifer Grosz 
+```
+
+```{r}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+
+# Clear environment of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+```
+
+```{r}
+# Load relevant packages used for analyzing General Mills data
+library(tidyverse) # contains ggplot2, dplyr, and several other packages used
+library(vtable) # contains vtable function for summary table of data
+library(janitor) # contains tidyverse functions for cross-tables
+library(gridExtra) # contains grid.arrange function used to combine plots in the same window
+library(patchwork) # use to put graphs together in the same frame
+library(knitr) # contains some table formatting functions
+library(kableExtra) # also contains functions used for table outputs
+library(GGally) # contains a custom correlation plot 
+library(moments) # to calculate skewness
+library(scales) # use for rounding numbers
+library(corrplot) # for correlation plot
+library(tidylog) # provides data set information reports
+library(tidyr) # provides uncount function
+library(Hmisc)
+library(MultinomialCI)
+library(htmlTable)
+library(colorspace)
+options(scipen = 999) # remove scientific notation
+```
+
+```{r}
+# load product data
+product_data <- read.csv("../data/mtp_product_data.csv")
+
+# load sales data
+sales_data <- read.csv("../data/mtp_sales_data.csv")
+```
+
+```{r}
+# Need to mutate UPC values to merge data sets because they're different in each data set. For example:
+# 
+# - sales_data has UPC as 01.16000.11653
+# - product_data has UPC as 00-01-16000-11653
+
+# change UPC to merge data sets
+product_data <- product_data %>%
+  # start by separating values by -."
+  separate("UPC", into = c("first", "second", "third", "fourth"), sep = "-") %>%
+  # unite columns to make UPC the same as it is in sales_data
+  unite(col = "UPC", c("second", "third", "fourth"), sep = ".") %>%
+  # drop column with leading zeros from product_data's UPC
+  select(-first)
+
+# Join data sets
+gm_joined_data <- right_join(sales_data, product_data, by = "UPC")
+```
+
+```{r}
+# Create cereal variable
+# Reduce brand variable to just brand name
+
+gm_joined_data <- gm_joined_data %>%
+  mutate(
+    cereal = case_when(
+      str_sub(brand, 1,  7) == "GENERAL" ~ str_sub(brand, 15, -1),
+      str_sub(brand, 1, 8) == "KELLOGGS" ~ str_sub(brand, 10, -1),
+      str_sub(brand, 1, 4) == "POST" ~ str_sub(brand, 6, -1)),
+    brand = case_when(
+    str_sub(brand, 1,  7) == "GENERAL" ~ "GENERAL MILLS",
+    str_sub(brand, 1, 8) == "KELLOGGS" ~ "KELLOGGS",
+    str_sub(brand, 1, 4) == "POST" ~ "POST")
+  )
+
+gm_only <- subset(gm_joined_data, brand == "GENERAL MILLS")
+```
+
+```{r}
+# Convert variables to factors
+gm_joined_data[,'promo'] <- factor(gm_joined_data[,'promo'])
+gm_joined_data[,'ad'] <- factor(gm_joined_data[,'ad'])
+gm_joined_data[,'brand'] <- factor(gm_joined_data[,'brand'])
+gm_joined_data[,'cereal'] <- factor(gm_joined_data[,'cereal'])
+gm_joined_data[,'flavor'] <- factor(gm_joined_data[,'flavor'])
+gm_joined_data[,'package'] <- factor(gm_joined_data[,'package'])
+gm_joined_data[,'iri_key'] <- factor(gm_joined_data[,'iri_key'])
+
+gm_only[,'promo'] <- factor(gm_only[,'promo'])
+gm_only[,'ad'] <- factor(gm_only[,'ad'])
+gm_only[,'brand'] <- factor(gm_only[,'brand'])
+gm_only[,'cereal'] <- factor(gm_only[,'cereal'])
+gm_only[,'flavor'] <- factor(gm_only[,'flavor'])
+gm_only[,'package'] <- factor(gm_only[,'package'])
+gm_only[,'iri_key'] <- factor(gm_only[,'iri_key'])
+```
+
+```{r}
+# Create total sales data frame
+gm_total_sales <- uncount(gm_joined_data, units)
+gm_only <- uncount(gm_only, units)
+```
+
+# Base EDA Step 1: Uni-variate non-graphical EDA
+
++ Examine the data
+
+```{r}
+# Look at the top few rows of the data
+head(gm_joined_data)
+```
+
++ Data appears to be tidy
+
+    - Each column is of the same variable type and has a unique entry for each row
+    - There are no missing or duplicate values
+    
+```{r}
+# Get a breakdown of the variables
+str(gm_joined_data)
+```
+
+```{r}
+# Get a breakdown of the variables
+vtable(gm_joined_data)
+```
+
++ Two Numeric variables
++ Two integer variables
++ Seven factor variables
+
+    - Promo is a binary variable where 0 is no promotion and 1 is promotion
+    - Brand, cereal, and flavor are categories
+    - Package is the ceral packaging type, box or cup
+    - Ad is either NONE for no ad, A for small ad, or B for medium ad
+    
+```{r}
+# Get variable descriptive statistics
+summary(gm_joined_data)
+```
+
++ Comments and questions about the data
+
+    - Average units sold is positively skewed
+    - Price per package is relatively uniform
+    - Far more boxes are sold compared to cups
+    - Regular flavor is the highest seller closely followed by Toasted
+    - Kelloggs sells the most units
+    - Post sells the fewest units by a significant margin
+    
+## Categorical Variables
+
++ The categorical variables in this data set are iri_key (store key), week, brand, flavor, package, promo, and ad
+
++ To better understand these variables will look at two elements:
+
+    - absolute count 
+    
+      - shows the number of observations or occurrences of each type of data 
+    
+    - relative proportion or percent 
+    
+      - shows a count of each factor level divided by the total count of a variable
+    
+### iri_key
+
+```{r message=FALSE, warning=FALSE}
+gm_joined_data %>%
+  group_by(iri_key) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            total_units_sold = sum(units), # calculate total number of units sold
+            proportion = sum(count) / nrow(gm_joined_data), # Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent))
+
+# there are 1420 separate stores in this data set
+```
+
+```{r}
+gm_joined_data %>%
+  group_by(iri_key) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            total_units_sold = sum(units), # calculate total number of units sold
+            proportion = sum(count) / nrow(gm_joined_data), # Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) 
+# there are 1420 separate stores in this data set
+```
+
+**Comments:**
+
+    - distribution of observations per store looks fairly even
+    - No single store makes up a significant proportion or percent of this data set, highest count is 35 followed by a group of stores with 31 observations
+    - There are a number of stores with less than 10 observations, so we might have too small of a sample size for those stores 
+  
+### week
+
+```{r message=FALSE, warning=FALSE}
+week <- gm_joined_data %>%
+  group_by(week) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            proportion = sum(count) / nrow(gm_joined_data), # Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) 
+
+# there are 1420 separate stores in this data set
+```
+
+`r  kbl(week) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - distribution of observations per week looks fairly even
+    - No single week makes up a significant proportion or percent of this data set, highest count is `r max(week$count)` and the lowest count is `r min(week$count)`
+    - might want to convert weeks into month/date values so we could look for seasonal or quarterly trends 
+  
+### promo
+
+```{r message=FALSE, warning=FALSE}
+promo <- gm_joined_data %>%
+  group_by(promo) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            proportion = round(sum(count) / nrow(gm_joined_data), 2),# Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) # convert to percentage
+```
+
+`r  kbl(promo) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - significantly more observations in this data set were recorded when there was not an in store promotion than when there was a promotion
+    - `r promo$percent[promo$promo == 0]` of the observations are no in-store promotions sales
+    - `r promo$percent[promo$promo == 1]` of the observations are in-store promotions sales
+
+### ad
+
+```{r message=FALSE, warning=FALSE}
+ad <- gm_joined_data %>%
+  group_by(ad) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            proportion = round(sum(count) / nrow(gm_joined_data), 2),# Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) # convert to percentage
+```
+
+`r  kbl(ad) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - significantly more observations in this data set were recorded when there was not an advertisements
+    - `r ad$percent[ad$ad == 'NONE']` of the observations are no advertisement sales
+    - `r ad$percent[ad$ad == 'A']` of the observations are advertisement A - "medium ad" sales
+    - `r ad$percent[ad$ad == 'B']` of the observations are advertisement B - "small ad" sales
+
+### brand
+
+```{r message=FALSE, warning=FALSE}
+brand <- gm_joined_data %>%
+  group_by(brand) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            proportion = round(sum(count) / nrow(gm_joined_data), 2),# Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) # convert to percentage
+```
+
+`r  kbl(brand) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Confirms Kelloggs had the most sales and Post had the least sales
+    - `r brand$percent[brand$brand == 'KELLOGGS']` of the observations are Kelloggs brand sales
+    - `r brand$percent[brand$brand == 'GENERAL MILLS']` of the observations are General Mills brand sales
+    - `r brand$percent[brand$brand == 'POST']` of the observations are Post brand sales
+  
+### flavor
+
+```{r message=FALSE, warning=FALSE}
+flavor <- gm_joined_data %>%
+  group_by(flavor) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            proportion = round(sum(count) / nrow(gm_joined_data), 2),# Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) # convert to percentage
+```
+
+`r  kbl(flavor) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Confirms Regular flavor is the highest seller closely followed by Toasted
+    - `r flavor$percent[flavor$flavor == 'REGULAR']` of the observations are Regular flavored sales
+    - `r flavor$percent[flavor$flavor == 'TOASTED']` of the observations are Toasted flavored sales
+    - `r flavor$percent[flavor$flavor == 'FRUIT']` of the observations are Fruit flavored sales
+    - `r flavor$percent[flavor$flavor == 'COCOA']` of the observations are Cocoa flavored sales
+    - `r flavor$percent[flavor$flavor == 'CINNAMON TOAST']` of the observations are Cinnamon Toast flavored sales
+  
+### package
+
+```{r message=FALSE, warning=FALSE}
+package <- gm_joined_data %>%
+  group_by(package) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            proportion = round(sum(count) / nrow(gm_joined_data), 2),# Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) # convert to percentage
+```
+
+`r  kbl(package) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Confirms significantly more observations in this data set were packaged in a box
+    - `r package$percent[package$package == 'BOX']` of the observations are packaged in a box
+    - `r package$percent[package$package == 'CUP']` of the observations are packaged in a cup
+
+### cereal
+
+```{r message=FALSE, warning=FALSE}
+cereal <- gm_joined_data %>%
+  group_by(cereal) %>%
+  summarise(count = n(),  # make calculations to summarize variable and create counting function
+            proportion = round(sum(count) / nrow(gm_joined_data), 2),# Calculate proportion
+            percent = sum(count) / nrow(gm_joined_data)) %>%# create percent variable 
+  arrange(-percent) %>% # display table results by percent in descending order
+  mutate(percent = percent(percent)) # convert to percentage
+```
+
+`r  kbl(cereal) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - distribution seems fairly balanced over cereal types
+    - there may be a low number of Cocoa Krispies when split up
+  
+## Quantitative Variables 
+
++ The Quantitative variables in this data set are units, price, and volume
+
++ To better understand the Quantitative variables we will look at the following elements:
+
+    - central tendency 
+    
+      - shows the average of a quantity
+
+    - variation 
+    
+      - measures the change of difference in quantity 
+      - range 
+      - standard deviation
+
+    - skewness 
+      - measures the symmetry of the distribution of a variable 
+  
+### units
+
+```{r message=FALSE, warning=FALSE}
+units <- gm_joined_data %>% 
+summarise(mean = mean(units), # calculate mean
+          median = median(units), # calculate median
+          max = max(units), # calculate max
+          min = min(units), # calculate min
+          standard_deviation = sd(units), # calculate sd
+          skew = skewness(units)) # calculate skew
+```
+
+`r  kbl(units) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+  - skewness of units is `r round(units$skew, 2)`
+  
+    - Confirms positive skew
+
+  - mean (`r units$mean`) is greater than median (`r units$median`) 
+  - median will be a better measure of central tendency.
+
+  - range (max - min) of price = `r units$max` - `r units$min` = `r units$max - units$min`
+
+  - standard deviation of price = `r round(units$standard_deviation, 2)`
+
+### price
+
+```{r message=FALSE, warning=FALSE}
+price <- gm_joined_data %>% 
+summarise(mean = mean(price), # calculate mean
+          median = median(price), # calculate median
+          max = max(price), # calculate max
+          min = min(price), # calculate min
+          standard_deviation = sd(price), # calculate sd
+          skew = skewness(price)) # calculate skew
+```
+
+`r  kbl(price) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+  - skewness of price is `r round(price$skew, 2)`, small skew 
+
+  - mean (`r dollar(price$mean)`) is less than median (`r dollar(price$median)`) 
+
+  - range (max - min) of price = `r dollar(price$max)` - `r dollar(price$min)` = `r dollar(price$max - price$min)`
+
+  - standard deviation of price = `r dollar(price$standard_deviation)`
+
+### volume
+
+```{r message=FALSE, warning=FALSE}
+volume <- gm_joined_data %>% 
+summarise(mean = mean(volume), # calculate mean
+          median = median(volume), # calculate median
+          max = max(volume), # calculate max
+          min = min(volume), # calculate min
+          standard_deviation = sd(volume), # calculate sd
+          skew = skewness(volume)) # calculate skew
+```
+
+`r  kbl(volume) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - skewness of volume is `r round(volume$skew, 2)`, small skew
+
+    - mean (`r round(volume$mean,2)`) is less than median (`r volume$median`) 
+    - median will be a better measure of central tendency.
+
+    - range (max - min) of price = `r volume$max` - `r volume$min` = `r volume$max - volume$min`
+
+    - standard deviation of price = `r round(volume$standard_deviation, 2)`
+  
+## Questions/Comments
+
++ Store (iri_key) - distribution of observations per store looks fairly even
+
++ Week - distribution of observations appears to be fairly even across all weeks
+
+    - we may want to convert weeks into month/date values to evaluate seasonal or quarterly trends 
+
++ Promo - significantly more observations were recorded when there was not an in store promotion than when there was a promotion
+
++ Ad - significantly more observations were recorded when there was not an advertisements
+
++ Brand - Kelloggs had the most sales and Post had the least sales
+
++ Flavor - Regular flavor is the highest seller closely followed by Toasted
+
++ Cereal - distribution seems to be fairly balanced over cereal type, but there may be a low number of Cocoa Krispies when split up
+
++ Package - significantly more observations in this data set were packaged in a box
+
++ Units - positive skew
+
++ Price - slight negative skew
+
++ Volume - slight positive skew
+
+# Base EDA Step 2: Uni-variate graphical EDA
+
+## Categorical Variables
+
++ Uni-variate graphical EDA for categorical variables will be bar graphs showing the count of observations per category
+
+### iri_key 
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = iri_key)) +
+ geom_bar() 
+```
+
+**Comments:**
+
+    -  this is not a very clear visual, might want to identify specific stores for further analysis
+  
+### week
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = factor(week))) +
+ geom_bar() 
+```
+  
+**Comments:**
+
+    - confirms even distribution of observations over each week
+
+### promo
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = factor(promo))) +
+ geom_bar() 
+```
+
+**Comments:**
+
+    - confirms more sales were made without an in store promotion
+    - is this representative of the typical distribution?
+  
+### ad
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = factor(ad))) +
+ geom_bar() 
+```
+
+**Comments:**
+
+    - confirms the most sales were made without an advertisement
+    - is this representative of the typical distribution?
+
+### brand
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = factor(brand))) +
+ geom_bar() 
+```
+
+**Comments:**
+
+    - confirms Kelloggs had the most sales and Post had the least sales
+  
+### flavor
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = factor(flavor))) +
+ geom_bar() 
+```
+
+**Comments:**
+
+    - confirms Regular and Toasted had the most sales 
+    - Cinnamon Toast had the least sales
+  
+### package
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = factor(package))) +
+ geom_bar() 
+```
+
+**Comments:**
+
+    - confirms box Packaging had the most sales 
+    - is this representative of a typical distribution?
+  
+### cereal
+
+```{r}
+# set up graph showing count for categories
+ggplot(data = gm_joined_data, mapping = aes(x = factor(cereal))) +
+  geom_bar() 
+```
+
+**Comments:**
+
+    - there appears to be a good number observations for each volume category
+
+## Quantitative Variables 
+
+    - Uni-variate graphical EDA for quantitative variables will be histogram plots, box plots and density plots
+
+### units
+
+```{r}
+# Create histogram
+units_histogram <- ggplot(data = gm_joined_data, mapping = aes(x = units)) + 
+  geom_histogram(bins = 10)
+
+# Create box plot
+units_boxplot <- ggplot(data = gm_joined_data, mapping = aes(x = 1)) + 
+  geom_boxplot(mapping = aes(y = units)) 
+
+# create density plot
+units_density <- ggplot(data = gm_joined_data, aes(x = units)) +
+  geom_line(stat = "density", color = "red") 
+
+# output
+units_boxplot + (units_histogram / units_density) 
+```
+
+    - Confirms skewed distribution
+
+    - will use median rather than mean
+
+    - observations with more than 30 units appear to be outliers, but they should be kept in the data set
+
+### price
+
+```{r}
+# Create histogram
+price_histogram <- ggplot(data = gm_joined_data, mapping = aes(x = price)) + 
+  geom_histogram(bins = 10)
+
+# Create boxplot
+price_boxplot <- ggplot(data = gm_joined_data, mapping = aes(x = 1)) + 
+  geom_boxplot(mapping = aes(y = price)) 
+
+# create density plot
+price_density <- ggplot(data = gm_joined_data, aes(x = price)) +
+  geom_line(stat = "density", color = "red") 
+
+# output
+price_boxplot + (price_histogram / price_density) 
+```
+
+    - Distribution appears to be normal
+
+    - will use mean
+
+    - price greater than 7.5 might appear to be outliers, but they are important and shouldn't be removed
+
+### volume
+
+```{r}
+# Create histogram
+volume_histogram <- ggplot(data = gm_joined_data, mapping = aes(x = volume)) + 
+  geom_histogram(bins = 10)
+
+# Create boxplot
+volume_boxplot <- ggplot(data = gm_joined_data, mapping = aes(x = 1)) + 
+  geom_boxplot(mapping = aes(y = volume)) 
+
+# create density plot
+volume_density <- ggplot(data = gm_joined_data, aes(x = volume)) +
+  geom_line(stat = "density", color = "red") 
+
+# output
+volume_boxplot + (volume_histogram / volume_density) 
+```
+
+    - Confirms slightly skewed distribution
+
+    - will use median rather than mean
+
+    - volume of 2 or above appears to be outliers, but they are important and shouldn't be removed
+
+## Questions/Comments
+
++ Store (iri_key) - not a clear visual, hard to see what’s going on 
+
++ Week - confirms fairly even number of observations across all weeks
+
++ Promo - is this distribution representative of the expected number of sales made with there’s a promo compared to the number of sales when there isn’t a promo?
+
++ Ad - is this distribution representative of the expected number of sales made with there’s an advertisement compared to the number of sales when there isn’t an advertisement?
+
++ Flavor - Cinnamon Toast had the least sales
+
++ Package - is this distribution representative of the expected number of sales made for box packaging compared to cup packaging?
+
++ Cereal - there appears to be a good number observations for each volume category. I don’t think there will be an issue with the slightly lower number of Cocoa Krispies observations when split up
+
++ Units - use median rather than mean
+
++ Price - use mean, distribution appears normal
+
++ Volume - use median rather than mean
+
+# Base EDA Step 3: Multi-Variate Non-Graphical EDA
+
+## Categorical Variables
+
+### iri_key
+
+#### iri_key and week
+
+```{r}
+# creates table of counts
+gm_joined_data %>%
+  tabyl(iri_key, week) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  head()
+```
+
+**Comments:**
+
+    - sample size for each group is too small, which means are not going to be able to come up with any reliable findings
+
+#### iri_key and promo
+
+```{r}
+# creates table of counts
+gm_joined_data %>%
+  tabyl(iri_key, promo) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  head()
+```
+
+**Comments:**
+
+    - sample size for each group looks small, which means we may not be able to come up with any reliable findings about promotions per store
+
+#### iri_key and ad
+
+```{r}
+# creates table of counts
+gm_joined_data %>%
+  tabyl(iri_key, ad) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  head()
+```
+
+**Comments:**
+
+    - largest sample size for each store when there is no advertisement, we may not be able to come up with any reliable findings about advertisements per store
+
+#### iri_key and brand
+
+```{r}
+# creates table of counts
+gm_joined_data %>%
+  tabyl(iri_key, brand) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  head()
+```
+
+**Comments:**
+
+    - sample size for each group looks small, which means we may not be able to come up with any reliable findings about brand sales per store
+
+#### iri_key and flabor
+
+```{r}
+# creates table of counts
+gm_joined_data %>%
+  tabyl(iri_key, flavor) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  head()
+```
+
+**Comments:**
+
+    - sample size for each group looks small, which means we may not be able to come up with any reliable findings about flavors per store
+
+#### iri_key and package
+
+```{r}
+# creates table of counts
+gm_joined_data %>%
+  tabyl(iri_key, package) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  head()
+```
+
+**Comments:**
+
+    - sample size for cup packaging across all stores is small, we won't be able to come up with any reliable findings about cup packaging per store
+
+#### iri_key and cereal
+
+```{r}
+# creates table of counts
+gm_joined_data %>%
+  tabyl(iri_key, cereal) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  head()
+```
+
+**Comments:**
+
+    - sample size for each group looks small, we may not be able to come up with any reliable findings about cereal per store
+
+### week
+
+#### week and promo
+
+```{r}
+# creates table of counts
+week_promo <- gm_joined_data %>%
+  tabyl(week, promo) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+`r  kbl(week_promo) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks good
+    - every week has more observations when there is no in store promotion 
+
+#### week and ad
+
+```{r message=FALSE, warning=FALSE}
+# creates table of counts
+week_ad <- gm_joined_data %>%
+  tabyl(week, ad) %>%
+  adorn_totals(where = c("row", "col")) 
+
+small_sample_a <- week_ad %>%
+  filter(A < 20)
+
+small_sample_b <- week_ad %>%
+  filter(B < 20)
+```
+
+`r  kbl(week_ad) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Medium Advertisements (A) have small sample sizes for the following weeks:
+
+`r  kbl(small_sample_a) %>% kable_minimal(full_width = F, position = "left") `
+
+    - Small Advertisements (B) have small sample sizes for the following weeks:
+
+`r  kbl(small_sample_b) %>% kable_minimal(full_width = F, position = "left") `
+
+#### week and brand
+
+```{r}
+# creates table of counts
+week_brand <- gm_joined_data %>%
+  tabyl(week, brand) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+`r  kbl(week_brand) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks good
+
+#### week and flavor
+
+```{r}
+# creates table of counts
+week_flavor <- gm_joined_data %>%
+  tabyl(week, flavor) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+`r  kbl(week_flavor) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks good
+
+#### week and package
+
+```{r}
+# creates table of counts
+week_package <- gm_joined_data %>%
+  tabyl(week, package) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+`r  kbl(week_package) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for cup packaging across weeks is small, we won't be able to come up with any reliable findings about cup packaging per week
+
+#### week and cereal
+
+```{r}
+# creates table of counts
+week_cereal <- gm_joined_data %>%
+  tabyl(week, cereal) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+`r  kbl(week_cereal) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for Cocoa Krispies sold in the weeks 1, 6, 7, 8, 9, 10, 18, and 23 may be too small
+
+    - week 42 might have a small sample size for Grape Nuts
+
+    - however, given the number of observations per week for each cereal the small counts for Cocoa Krispies and Grape Nuts cereals might not be an issue
+
+### promo
+
+    - Split between in store promotions vs no in store promotions in data set is disproportionate
+
+#### promo and ad
+
+```{r}
+# creates table of counts
+promo_ad <- gm_joined_data %>%
+  tabyl(ad, promo) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(promo_ad) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks fine
+
+    - the peak advertisement category is none for when there is and isn't a promotion 
+
+#### promo and brand
+
+```{r}
+# creates table of counts
+promo_brand <- gm_joined_data %>%
+  tabyl(brand, promo) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(promo_brand) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks fine
+
+    - Kelloggs sells the most when there is and isn't an in store promotion
+
+#### promo and flavor
+
+```{r}
+# creates table of counts
+promo_flavor <- gm_joined_data %>%
+  tabyl(flavor, promo) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(promo_flavor) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks fine, Cinnamon Toast flavored sales when there is an in store promotion might have a small sample size
+
+    - regular flavor sells the most when there is and isn't an in store promotion
+
+#### promo and package
+
+```{r}
+# creates table of counts
+promo_package <- gm_joined_data %>%
+  tabyl(package, promo) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(promo_package) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks fine, when there is an in store promotion sales with cup packaging might have a small sample size
+
+    - box packaging sells the most when there is and isn't an in store promotion
+
+#### promo and cereal
+
+```{r}
+# creates table of counts
+promo_cereal <- gm_joined_data %>%
+  tabyl(cereal, promo) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(promo_cereal) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - sample size for each group looks fine, Kix or Raisin Bran sales when there is an in store promotion might have a small sample size
+
+    - Frosted Flakes sells the most when there is and isn't an in store promotion
+
+### ad
+
+#### ad and brand
+
+```{r}
+# creates table of counts
+ad_brand <- gm_joined_data %>%
+  tabyl(brand, ad) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(ad_brand) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Post brand sales when there is an advertisement (A or B) might have a small sample size
+
+    - Kelloggs sells the most for every advertisement category 
+
+#### ad and flavor
+
+```{r}
+# creates table of counts
+ad_flavor <- gm_joined_data %>%
+  tabyl(flavor, ad) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(ad_flavor) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Cinnamon Toast and Cocoa flavored sales when there is an advertisement category of B have a small sample size, Fruit might also have a small sample size
+      - When the advertisement category is A might also have a small sample size for Cinnamon Toast, Cocoa, and Fruit flavored sales
+
+    - Regular flavor sells the most when advertisement category is B or None
+
+    - Toasted sells the most when advertisement category is A
+
+#### ad and package
+
+```{r}
+# creates table of counts
+ad_package <- gm_joined_data %>%
+  tabyl(package, ad) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(ad_package) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Cup packaging has a small sample size  when there is an advertisement category of A or B 
+
+    - Box packaging sells the most for every advertisement category 
+
+#### ad and cereal
+
+```{r}
+# creates table of counts
+ad_cereal <- gm_joined_data %>%
+  tabyl(cereal, ad) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(ad_cereal) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Advertisement category B doesn't have a large enough sample size for all cereal categories
+
+    - Froot Loops cereal sells the most when the advertisement category is A
+
+    - Frosted Flakes appear to sell the most when the advertisement category is B
+
+    - Frosted Flakes cereal sells the most when the advertisement category is none, followed closely by Froot Loops
+
+### brand
+
+#### brand and flavor
+
+```{r}
+# creates table of counts
+brand_flavor <- gm_joined_data %>%
+  tabyl(flavor, brand) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(brand_flavor) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - When the brand is General Mills, there is a small sample size for Fruit flavored sales
+      - Toasted flavor sold the most
+  
+    - When the brand is Kelloggs, there is a small sample size for Cinnamon Toast flavored sales and potentially a small sample for Cocoa flavored sales
+      - Regular flavor sold the most
+  
+    - When the brand is Post the only flavor sold was Regular
+
+#### brand and package
+
+```{r}
+# creates table of counts
+brand_package <- gm_joined_data %>%
+  tabyl(package, brand) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(brand_package) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - When the brand is General Mills, there is a small sample size for Cup packaging
+    - When the brand is Kelloggs, there is a potentially a small sample for Cup packaging
+    - When the brand is Post the only packaging sold was Box
+
+#### brand and cereal
+
+```{r}
+# creates table of counts
+brand_cereal <- gm_joined_data %>%
+  tabyl(cereal, brand) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(brand_cereal) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - When the brand is General Mills, the only cereals sold are: Cheerios, Cinnamon TST CR, Cocoa Puffs, Kix, and Lucky Charms
+      - Cinnamon TST CR sold the most
+      - Cocoa Puffs sold the least
+  
+    - When the brand is Kelloggs, the only cereals sold are: Cocoa Krispies, Froot Loops, Frosted Flakes, Frosted Mini Wheats, Rasin Bran, Rice Krispies, Smart Start, and Special K
+      - Frosted Flakes sold the most
+      - Cocoa Krispies sold the least
+  
+    - When the brand is Post, the only cereals sold are: Grape Nuts and Shredded Wheats
+      - Grape Nuts sold the most
+      - Shredded Wheat sold the least
+
+### flavor
+
+#### flavor and package
+
+```{r}
+# creates table of counts
+flavor_package <- gm_joined_data %>%
+  tabyl(package, flavor) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(flavor_package) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Box sold the most for each flavor
+    - When the packaging is Cup the flavors of Cinnamon Toast, Cocoa, Fruit, and Regular have small sample sizes
+
+#### flavor and cereal
+
+```{r}
+# creates table of counts
+flavor_cereal <- gm_joined_data %>%
+  tabyl(cereal, flavor) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(flavor_cereal) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - When the flavor is Cinnamon Toast, Cinnamon TST CR is the only cereal sold
+  
+    - When the flavor is Cocoa, Cinnamon Cocoa Krispies and Coco Puffs are the only cereal sold
+      - Cocoa Puffs sold the most
+      - Cocoa Krispies sold the least
+  
+    - When the flavor is Fruit, Froot Loops is the only cereal sold
+  
+    - When the flavor is Regular, the only cereals sold are: Cheerios, Frosted Flakes, Frosted Mini Wheats, Grape Nuts, Kix, Lucky Charms, Rasin Bran, and Shredded Wheat
+      - Frosted Flakes sold the most
+      - Lucky Charms sold the least
+  
+    - When the flavor is Toasted, the only cereals sold are: Cheerios, Lucky Charms, Rice Krispies, Smart Start, Special K
+      - Frosted Flakes sold the most
+      - Smart Start sold the least
+  
++ What's going on with the few observations for cheerios and lucky charms listed as Regular flavor rather than Toasted?
+
+### package
+
+#### package and cereal
+
+```{r}
+# creates table of counts
+package_cerial <- gm_joined_data %>%
+  tabyl(cereal, package) %>%
+  adorn_totals(where = c("row", "col")) 
+```
+
+
+`r  kbl(package_cerial) %>% kable_minimal(full_width = F, position = "left") `
+
+**Comments:**
+
+    - Box sold the most for each flavor
+    - When the packaging is Cup, no category of cereal has enough observations 
+
+## Quantitative Variables 
+
+### Correlation Table
+
+```{r message=FALSE, warning=FALSE}
+# create correlation matrix
+correlation_matrix <- gm_joined_data %>%
+  mutate(week = factor(week)) %>%
+  select(-iri_key) %>%
+  select_if(is.numeric) %>%
+  cor() %>%
+  round(2)
+```
+
+`r  kbl(correlation_matrix) %>% kable_minimal(full_width = F, position = "left") `
+
++ there is a negative correlation coefficient ( `r correlation_matrix[1, 2]`) between price and units
++ there is a positive correlation coefficient ( `r correlation_matrix[2, 3]`) between price and volume
++ there is a small, positive correlation between volume and units ( `r correlation_matrix[1,3]`)
+
+## Questions/Comments
+
++ What's going on with the four observations for cheerios and three observations for lucky charms that are listed as Regular flavor rather than Toasted?
+
+    - is this a data entry error?
+
++ why is there a negative correlation coefficient between price and units?
+
+
+# Base EDA Step 4: Multi-Variate Graphical EDA
+
+## Categorical Variables
+
+    - visual of store (iri_key) isn't clear as a bar graph, so I'm not sure looking into it again here would really show us much
+
+```{r}
+# build mosiac plot
+gm_joined_data %>%
+group_by(iri_key, promo) %>% 
+summarise(count = n()) %>% 
+ggplot(aes(iri_key, promo)) + 
+geom_tile(aes(fill = count)) 
+
+# build bar graph with counts for multiple categorical variables
+gm_joined_data %>%
+  ggplot(mapping = aes(x = iri_key, fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - these plots confirm that visualizing iri_key isn't very telling
+
+### week
+
+#### week and promo
+
+```{r}
+# build bar graph with counts for multiple categorical variables
+gm_joined_data %>%
+  ggplot(mapping = aes(x = factor(week), fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms there are more observations for non-promotion weeks than when there was an in store promotion in this data set
+  
+#### week and ad
+```{r}
+# build bar graph with counts for multiple categorical variables
+gm_joined_data %>%
+  ggplot(mapping = aes(x = factor(week), fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - when looking at advertisements over weeks we may want to split them out from when there is not an advertisement in order to evaluate performance of advertisement A against advertisement B
+
+```{r message=FALSE, warning=FALSE}
+# build bar graph with counts for when there is an advertisement only - first half of the weeks
+gm_joined_data %>%
+  filter(ad %in% c("A", "B"), week %in% c(1:26)) %>%
+  ggplot(mapping = aes(x = factor(week), fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+```{r}
+# second half of the weeks
+gm_joined_data %>%
+  filter(ad %in% c("A", "B"), week %in% c(27:52)) %>%
+  ggplot(mapping = aes(x = factor(week), fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - week 39 (typically around mid to late September) has a low count of medium sized advertisements
+
+    - there appears to be more medium advertisements (A) than small advertisements (B) per week, but that isn't consistent across all weeks
+
+#### week and brand
+```{r}
+# build bar graph with counts for multiple categorical variables
+gm_joined_data %>%
+  ggplot(mapping = aes(x = factor(week), fill = brand)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+
+**Comments:**
+
+    - confirms across all weeks there are more Kelloggs brand than GM brand and more GM than Post brand observations in the data
+
+#### week and flavor
+
+```{r message=FALSE, warning=FALSE}
+# build bar graph with counts for first 26 weeks
+gm_joined_data %>%
+  filter( week %in% c(1:26)) %>%
+  ggplot(mapping = aes(x = factor(week), fill = flavor)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+```{r message=FALSE, warning=FALSE}
+# build bar graph with counts for last 26 weeks
+gm_joined_data %>%
+  filter( week %in% c(27:52)) %>%
+  ggplot(mapping = aes(x = factor(week), fill = flavor)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms Regular followed by Toasted flavors typically have the most observations each week
+
+    - in week 52 toasted has more observations more than regular
+
+    - in week 10 toasted and regular seem to have the same number of observations
+
+#### week and package
+```{r}
+# build bar graph with counts
+gm_joined_data %>%
+  ggplot(mapping = aes(x = factor(week), fill = package)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms box packaging sold the most each week
+
+#### week and cereal
+
+```{r message=FALSE, warning=FALSE}
+# build mosaic plot first 26 weeks
+gm_joined_data %>%
+  filter(week %in% c(1:26)) %>%
+  group_by(week, cereal) %>% 
+  summarise(count = n()) %>% 
+  ggplot(aes(factor(week), cereal)) + 
+  geom_tile(aes(fill = count)) 
+```
+
+```{r message=FALSE, warning=FALSE}
+# build mosaic plot las 26 weeks
+gm_joined_data %>%
+  filter(week %in% c(27:52)) %>%
+  group_by(week, cereal) %>% 
+  summarise(count = n()) %>% 
+  ggplot(aes(factor(week), cereal)) + 
+  geom_tile(aes(fill = count)) 
+```
+
+**Comments:**
+
+    - confirms box frosted flakes and froot loops typically had the most observations 
+
+    - in the first 26 weeks of the year, Cocoa Krispies typically had the least observations
+
+    - in the last 26 weeks it looks like Cocoa Puffs typically had the least sales
+
+### promo
+
+#### promo and ad
+
+```{r}
+# build bar graph with counts for multiple categorical variables
+gm_joined_data %>%
+  ggplot(mapping = aes(x = ad, fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - when you only look at the promotions for ad A compared with ad B there appears to be a similar pattern of promotions. It might be interesting to look at this further over weeks or stores
+
+```{r message=FALSE, warning=FALSE}
+# build bar graph with counts when ad is A or B
+gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  ggplot(mapping = aes(x = ad, fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+
+# build mosaic plot with promotion and either Ad A or Ad B
+gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  group_by(ad, promo) %>% 
+  summarise(count = n()) %>% 
+  ggplot(aes(ad, promo)) + 
+  geom_tile(aes(fill = count)) 
+```
+
+**Comments:**
+
+    - interesting to see that there are more observations of ad B and A when there is an also in store promotion being ran than when there isn't
+
+#### promo and brand
+
+```{r}
+# observation counts for promotions over brands
+gm_joined_data %>%
+  ggplot(mapping = aes(x = brand, fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms there are more observations for each brand when there isn't an in store promotion
+
+#### promo and flavor
+
+```{r}
+# build bar graph with counts for promotions over flavors
+gm_joined_data %>%
+  ggplot(mapping = aes(x = flavor, fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms there are more observations for each flavor when there isn't an in store promotion
+
+#### promo and package
+
+```{r}
+# build bar graph with counts for promotions over package types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = package, fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms there are more observations for each package type when there isn't an in store promotion
+
+#### promo and cereal
+
+```{r}
+# build bar graph with counts for promo over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = cereal, fill = promo)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+
+**Comments:**
+
+    - confirms there are more observations for each cereal when there isn't an in store promotion
+
+### ad
+
+#### ad and brand
+
+```{r}
+# build bar graph with counts for ad caegories over brands
+gm_joined_data %>%
+  ggplot(mapping = aes(x = brand, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms there are more observations for each brand when there isn't an advertisement
+
+```{r message=FALSE, warning=FALSE}
+# build bar graph with counts for ad categories A & B over brands
+gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  ggplot(mapping = aes(x = brand, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - Post has more observations for advertisement B than A when there is an advertisement 
+
+    - Kelloggs and GM have more observations for advertisement A when there is an ad
+
+#### ad and flavor
+
+```{r}
+# build bar graph with counts for ad categories over flavors
+gm_joined_data %>%
+  ggplot(mapping = aes(x = flavor, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+
+**Comments:**
+
+    - confirms there are more observations for each flavor when there isn't an advertisement
+
+```{r message=FALSE, warning=FALSE}
+# build bar graph with counts for  ad categories A & B over flavors
+gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  ggplot(mapping = aes(x = flavor, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - when there is an advertisement, there are more observations for ad A across all flavors
+
+#### ad and package
+
+```{r}
+# build bar graph with counts for ad categories over package types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = package, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms there are more observations for each flavor when there isn't an advertisement
+
+#### ad and cereal
+
+```{r}
+# build bar graph with counts for ad categories over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = cereal, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms there are more observations for each cereal when there isn't an advertisement
+
+```{r message=FALSE, warning=FALSE}
+# build bar graph with counts for  ad categories A & B over cereal types
+gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  ggplot(mapping = aes(x = cereal, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - When there is an advertisement, all cereals have more observations for advertisement A except for grape nuts 
+    - Grape nuts have more observations for ad B
+
+### brand
+
+#### brand and flavor
+
+```{r}
+# build bar graph with counts for ad categories over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = flavor, fill = brand)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+    - confirms all three brands sell regular flavored products and that kelloggs sells the most of that flavor
+
+    - confirms Post only sells regular flavored products, GM only sells toasted, regular, cocoa and cinnamon toast flavored products and Kelloggs only sells toasted, regular, cocoa, and cinnamon toast flavored products
+
+    - if we're trying to conduct a comparison of flavors by brands, we're going to run into some issues
+
+#### brand and package
+
+```{r}
+# build bar graph with counts for ad categories over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = package, fill = brand)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms all three brands have more obsercations for boxed products 
+
+#### brand and cereal
+
+```{r}
+# build bar graph with counts for ad categories over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = cereal, fill = brand)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms kelloggs' frosted flakes and froot loops cereals have the most observations
+
+### flavor
+
+#### flavor and package
+
+```{r}
+# build bar graph with counts for ad categories over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = flavor, fill = package)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms for each flavor, boxed packaging has the most observations
+
+#### flavor and cereal
+
+```{r}
+# build bar graph with counts for ad categories over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = cereal, fill = flavor)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms something is wrong with Lucky Charms and Cheerio observations recorded as regular flavor (should be toasted)
+
+### package
+
+#### package and cereal
+
+```{r}
+# build bar graph with counts for ad categories over cereal types
+gm_joined_data %>%
+  ggplot(mapping = aes(x = cereal, fill = package)) +
+  geom_bar(position = "dodge") +
+  coord_flip()
+```
+
+**Comments:**
+
+    - confirms most observations for each cereal were packaged in a box 
+
+## Quantitative Variables
+
+```{r}
+# set up colors
+fill_color <- "#4271AE"
+line_color <- "#1F3552"
+```
+
+### units
+
+#### units and price
+
+    - negative correlation coefficient between units and price
+
+```{r message=FALSE}
+# create box plot
+units_price_box <-  gm_joined_data %>% 
+  group_by(units) %>%
+  ggplot(mapping = aes(x = units, group = units, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color)
+
+# create scatter plot
+units_price_scatter <- gm_joined_data %>% 
+  ggplot(mapping = aes(x = units, y = price)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+# output
+units_price_box + units_price_scatter
+```
+
+**Comments:**
+
+    - confirms there is some kind of negative relationship between units and price 
+  
+    - need to look at this over cereal types
+  
+#### units and volume
+
+    - slight positive correlation coefficient between units and volume
+
+```{r message=FALSE}
+# create box plot
+units_vol_box <-  gm_joined_data %>% 
+  group_by(units) %>%
+  ggplot(mapping = aes(x = units, group = units, y = volume)) +
+  geom_boxplot(fill = fill_color, colour = line_color)
+
+
+# create scatter plot
+units_vol_scatter <- gm_joined_data %>% 
+  ggplot(mapping = aes(x = units, y = volume)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+# output
+units_vol_box + units_vol_scatter
+```
+
+**Comments:**
+
+    - confirms there is some kind of positive relationship between units and volume, but this looks odd 
+    - average volume is not consistently increasing with units in a linear manner
+  
+    - need to look at this over cereal types
+  
+### price
+
+#### price and volume
+
+    - slight positive correlation coefficient between units and volume
+
+```{r message=FALSE}
+# create box plot
+price_vol_box <-  gm_joined_data %>% 
+  group_by(volume) %>%
+  ggplot(mapping = aes(x = volume, group = volume, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color)
+
+
+# create scatter plot
+price_vol_scatter <- gm_joined_data %>% 
+  ggplot(mapping = aes(x = volume, y = price)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+# output
+price_vol_box + price_vol_scatter
+```
+
+**Comments:**
+
+    - confirms there is some kind of positive relationship between price and volume
+
+## Categorical and Quantitative Variables
+
+### Price interactions
+
+```{r message=FALSE, warning=FALSE}
+# boxplot of price per brand
+price_promo <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = promo, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+price_ad <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = ad, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+price_brand <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = brand, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+price_flavor <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = flavor, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+price_package <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = package, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+# this graph doesn't look very good, its hard ot read
+price_cereal <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = cereal, y = price)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+(price_promo + price_package) / (price_flavor) /( price_brand  + price_ad ) / price_cereal
+```
+
+### Unit Interactions
+
+```{r message=FALSE, warning=FALSE}
+# boxplot of unit per brand
+unit_promo <- gm_total_sales %>%
+  ggplot(mapping = aes(x = promo)) +
+  geom_bar(fill = fill_color, colour = line_color) 
+
+unit_ad <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = ad)) +
+  geom_bar(fill = fill_color, colour = line_color) 
+
+unit_brand <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = brand)) +
+  geom_bar(fill = fill_color, colour = line_color) 
+
+unit_flavor <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = flavor)) +
+  geom_bar(fill = fill_color, colour = line_color) 
+
+unit_package <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = package)) +
+  geom_bar(fill = fill_color, colour = line_color) 
+
+# this graph doesn't look very good, its hard to read
+unit_cereal <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = cereal)) +
+  geom_bar(fill = fill_color, colour = line_color) 
+
+(unit_promo + unit_package) / (unit_flavor) /( unit_brand  + unit_ad ) / unit_cereal
+```
+
+### Volume Interations
+
+```{r message=FALSE, warning=FALSE}
+# boxplot of volume per brand
+volume_promo <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = promo, y = volume)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+volume_ad <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = ad, y = volume)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+volume_brand <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = brand, y = volume)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+volume_flavor <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = flavor, y = volume)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+volume_package <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = package, y = volume)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+# this graph doesn't look very good, its hard ot read
+volume_cereal <- gm_total_sales %>% 
+  ggplot(mapping = aes(x = cereal, y = volume)) +
+  geom_boxplot(fill = fill_color, colour = line_color) 
+
+(volume_promo + volume_package) / (volume_flavor) /( volume_brand  + volume_ad ) / volume_cereal
+```
+
+### Brand interaction futher analysis
+
+```{r message=FALSE, warning=FALSE}
+# Brand and Price
+# brand total sales
+brand_sales <- gm_total_sales %>%
+  group_by(brand) %>%
+  summarise(median_price = median(price),
+            mean_price = mean(price),
+            totalunits = n(),
+            totalsales = sum(price),
+            totalvolume = sum(volume))
+
+# build bar graph with total sales per brand
+brand_price <- brand_sales %>%
+  ggplot(mapping = aes(x = brand, y = totalsales, fill = brand)) +
+  geom_col(stat= 'identity', position = "dodge") +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  coord_flip()
+
+## brand and units
+# build bar graph with total units per brand
+brand_units <- brand_sales %>%
+  ggplot(mapping = aes(x = brand, y = totalunits, fill = brand)) +
+  geom_col(stat= 'identity', position = "dodge") +
+  coord_flip()
+
+## brand and volume
+# build bar graph with total units per brand
+brand_volume <- brand_sales %>%
+  ggplot(mapping = aes(x = brand, y = totalvolume, fill = brand)) +
+  geom_col(stat= 'identity', position = "dodge") +
+  coord_flip()
+
+brand_price / brand_units / brand_volume
+```
+
+### cereal interactions further analysis
+
+```{r message=FALSE, warning=FALSE}
+# Cereal and Price
+# brand total sales
+cereal_sales <- gm_total_sales %>%
+  group_by(brand, cereal) %>%
+  summarise(median_price = median(price),
+            mean_price = mean(price),
+            totalunits = n(),
+            totalsales = dollar(sum(price)),
+            totalvolume = sum(volume))
+
+# build bar graph with total sales per cereal
+cereal_sales %>%
+  ggplot(mapping = aes(x = cereal, y = totalsales, fill = brand)) +
+  geom_col(stat= 'identity', position = "dodge") +
+  coord_flip()
+```
+
+```{r message=FALSE, warning=FALSE}
+## cereal and units
+# build bar graph with total units per brand
+cereal_sales %>%
+  ggplot(mapping = aes(x = cereal, y = totalunits, fill = brand)) +
+  geom_col(stat= 'identity', position = "dodge") +
+  coord_flip()
+```
+
+
+```{r message=FALSE, warning=FALSE}
+## cereal and volume
+# build bar graph with total units per brand
+cereal_sales %>%
+  ggplot(mapping = aes(x = cereal, y = totalvolume, fill = brand)) +
+  geom_col(stat= 'identity', position = "dodge") +
+  coord_flip()
+```
+
+## Questions/Comments
+
++ we could look at promotion performance across stores since the promotion is reliant upon the store 
+
++ Which ad had better performance A or B
+
++ need to look at units per cereal and find total sales price/ total sales per cereal
+
+# Detailed EDA
+
++ Questions to be answered outside of the data
+
+    - Are the four observations for cheerios and three observations for lucky charms that are listed as Regular flavor rather than Toasted data entry errors?
+  
+    - Is this data set representative of the marketplace for these three brands?
+      
+      - is this a typical distribution of promotions to no promotions 
+      - is this the typical distribution between advertisement categories per year for GM
+      - how about packaging? is there usually a significantly higher proportion of boxed products sold?
+      
+      
+    - Can we get actual dates associated with these observations rather than just week numbers recorded in this data set?
+  
+      - conducting a holiday or quarterly analysis could be beneficial for identifying seasonal trends
+      - it would also help with identifying our competitor's promo and advertisement schedules
+      
+
++ Questions that can be answered from the data?
+
+    - How well do promotions perform? (promotion performance)
+  
+      - Performance between brands?
+      - How about only looking at General Mills promotions?
+      - How do promotion's perform by flavor between brands?
+      - How do GM's promotions perform between flavors?
+
+    - How well do advertisements perform? (advertisement performance)
+  
+      - Performance across brands?
+      - How about GM's advertisements based on cereal?
+      - How about GM's advertisements based on flavors?
+    
+    - What about overall sales performance for each brand? (overall cereal performance)
+  
+      - looking at performance in terms of units sold and sales revenue
+    
+    - What is the advertisement and in store promotion strategy for each brand? (competitive strategy performance)
+
+    - Why is there a negative correlation coefficient between price and units?
+
+## Promotion Performance
+
+### Promotion Performance Among Brands
+
+```{r message=FALSE, warning=FALSE}
+# GM promotional sales Figures in relation to others
+gm_total_sales %>%
+  filter(promo == 1) %>%
+  ggplot(mapping = aes(x = brand, fill = brand)) +
+  geom_bar() +
+  labs(y = "Units Sold")
+```
+
++ General Mills sits between Kelloggs and Post in promotional units sold
+
+    - Consistent with non-promitional sales figures
+
+### Promotion Performance Within General Mills
+
+```{r message=FALSE, warning=FALSE}
+# Overall sales profile of units and sold and revenue between promotions and non-promotion
+gm_cereal_Punits <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 1) %>%
+  ggplot(mapping = aes(x = cereal, fill = cereal)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Promotion") +
+  labs(y = "Units Sold")
+
+gm_cereal_Runits <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 0) %>%
+  ggplot(mapping = aes(x = cereal, fill = cereal)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("No Promotion") +
+  labs(y = "Units Sold")
+
+gm_cereal_Prev <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 1) %>%
+  ggplot(mapping = aes(x = cereal, y = price, fill = cereal)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(y = "Revenue")
+
+gm_cereal_Rrev <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 0) %>%
+  ggplot(mapping = aes(x = cereal, y = price, fill = cereal)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(y = "Revenue")
+
+(gm_cereal_Punits +  gm_cereal_Runits) / (gm_cereal_Prev + gm_cereal_Rrev)
+
+```
+
++ The overall sales profile for General Mills changes during a promotion. when promotions are being ran Lucky Charms moves from the third highest seller to the top seller
+
+    - Cheerios moves from first to third
+    - Cinnamon Toast Crunch stays in second
+    
+### Promotional Flavor Analysis Between Brands
+
+```{r message=FALSE, warning=FALSE}
+# Examine regular, toasted, and cocoa flavor promotion sales across brands
+reg_brands_units <- gm_total_sales %>%
+  filter(flavor == "REGULAR", promo == 1) %>%
+  ggplot(mapping = aes(x = brand, fill = brand)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Regular on Promotion") +
+  labs(y = "Units Sold")
+
+toasted_brands_units <- gm_total_sales %>%
+  filter(flavor == "TOASTED", promo == 1) %>%
+  ggplot(mapping = aes(x = brand, fill = brand)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Toasted on Promotion") +
+  labs(y = "Units Sold")
+
+cocoa_brands_units <- gm_total_sales %>%
+  filter(flavor == "COCOA", promo == 1) %>%
+  ggplot(mapping = aes(x = brand, fill = brand)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Cocoa on Promotion") +
+  labs(y = "Units Sold")
+
+reg_brands_units / toasted_brands_units / cocoa_brands_units
+
+```
+
++ General Mills trails units sold in regular flavored cereal to both Post and Kelloggs
+
+    - General Mills also trails in the Toasted segment
+    - General Mills sells more units in the Cocoa segment compared to Kelloggs
+
+### Promotional Flavor Analysis Within Brand
+
+```{r message=FALSE, warning=FALSE}
+# Overall sales profile of units and sold and revenue between promotions and non-promotion based on flavor
+gm_flavor_Punits <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 1) %>%
+  ggplot(mapping = aes(x = flavor, fill = flavor)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Promotion") +
+  labs(y = "Units Sold")
+
+gm_flavor_Runits <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 0) %>%
+  ggplot(mapping = aes(x = flavor, fill = flavor)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("No Promotion") +
+  labs(y = "Units Sold")
+
+gm_flavor_Prev <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 1) %>%
+  ggplot(mapping = aes(x = flavor, y = price, fill = flavor)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(y = "Revenue")
+
+gm_flavor_Rrev <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", promo == 0) %>%
+  ggplot(mapping = aes(x = flavor, y = price, fill = flavor)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  labs(y = "Revenue")
+
+(gm_flavor_Punits +  gm_flavor_Runits) / (gm_flavor_Prev + gm_flavor_Rrev)
+
+```
+
++ Cocoa flavored cereal is the most impacted by promotions
+
+    - Cocoa shifts up one position from lowest performing cereal in revenue and units sold when on promotion
+    - All other cereals remain proportionally consistent between promotions and non-promotions
+
+## Ad performance
+
+### Ad performance across brands
+
+```{r message=FALSE, warning=FALSE}
+# GM ad sales Figures in relation to others
+gm_total_sales %>%
+  filter(ad == "A" | ad == "B") %>%
+  ggplot(mapping = aes(x = brand, fill = ad)) +
+  geom_bar(position = "dodge") +
+  labs(y = "Units Sold")
+```
+
++ The pattern of General Mills sitting between Kelloggs and Post holds consistent
+
+    - For both small and medium adverstiements GM sits between both competitors in overall units sold
+    
+### Ad performance within brand based on cereal
+    
+```{r message=FALSE, warning=FALSE}
+# Examine ad impacts on GM cereal sales and revenue
+
+
+gm_cereal_Aunits <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", ad == "A" | ad == "B") %>%
+  ggplot(mapping = aes(x = cereal, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip() +
+  ggtitle("Ad") +
+  labs(y = "Units Sold")
+
+
+gm_cereal_Arevenue <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", ad == "A" | ad == "B") %>%
+  group_by(ad, cereal) %>%
+  summarise(rev = sum(price)) %>%
+  ggplot(mapping = aes(x = cereal, y = rev, fill = ad)) +
+  geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Ad") +
+  labs(y = "Revenue") +
+  scale_y_continuous(labels=scales::dollar_format())
+
+gm_cereal_Aunits / gm_cereal_Arevenue
+```
+
+### Ad performance within brand based on flavor
+
+```{r message=FALSE, warning=FALSE}
+# Examine ad impacts on GM cereal flavor sales and revenue
+gm_flavor_Aunits <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", ad == "A" | ad == "B") %>%
+  ggplot(mapping = aes(x = flavor, fill = ad)) +
+  geom_bar(position = "dodge") +
+  coord_flip() +
+  ggtitle("Ad") +
+  labs(y = "Units Sold")
+
+gm_flavor_Arevenue <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS", ad == "A" | ad == "B") %>%
+  group_by(ad, flavor) %>%
+  summarise(rev = sum(price)) %>%
+  ggplot(mapping = aes(x = flavor, y = rev, fill = ad)) +
+  geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Ad") +
+  labs(y = "Revenue") +
+  scale_y_continuous(labels=scales::dollar_format())
+
+gm_flavor_Aunits / gm_flavor_Arevenue
+```
+
+## Overall Cereal Performance among brands
+
+### General Mills
+
+```{r message=FALSE, warning=FALSE}
+# Cereal profile
+gm_cereal_units <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS") %>%
+  ggplot(mapping = aes(x = cereal, fill = cereal)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Total Sales") +
+  labs(y = "Units Sold")
+
+gm_cereal_revenue <- gm_total_sales %>%
+  filter(brand == "GENERAL MILLS") %>%
+  ggplot(mapping = aes(x = cereal, y = price, fill = cereal)) +
+  geom_bar(stat = "Identity", show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("") +
+  labs(y = "Revenue")
+
+gm_cereal_units / gm_cereal_revenue
+```
+
+### Kelloggs
+
+```{r message=FALSE, warning=FALSE}
+# Cereal profile
+kg_cereal_units <- gm_total_sales %>%
+  filter(brand == "KELLOGGS") %>%
+  ggplot(mapping = aes(x = cereal, fill = cereal)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Total Sales") +
+  labs(y = "Units Sold")
+
+kg_cereal_revenue <- gm_total_sales %>%
+  filter(brand == "KELLOGGS") %>%
+  ggplot(mapping = aes(x = cereal, y = price, fill = cereal)) +
+  geom_bar(stat = "Identity", show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("") +
+  labs(y = "Revenue")
+
+kg_cereal_units / kg_cereal_revenue
+```
+
+### Post
+
+```{r message=FALSE, warning=FALSE}
+# Cereal profile
+pt_cereal_units <- gm_total_sales %>%
+  filter(brand == "POST") %>%
+  ggplot(mapping = aes(x = cereal, fill = cereal)) +
+  geom_bar(show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("Total Sales") +
+  labs(y = "Units Sold")
+
+pt_cereal_revenue <- gm_total_sales %>%
+  filter(brand == "POST") %>%
+  ggplot(mapping = aes(x = cereal, y = price, fill = cereal)) +
+  geom_bar(stat = "Identity", show.legend = FALSE) +
+  coord_flip() +
+  ggtitle("") +
+  labs(y = "Revenue")
+
+pt_cereal_units / pt_cereal_revenue
+```
+
+
+## Competitive strategy performance
+
+### Promotions
+
+```{r message=FALSE, warning=FALSE}
+promotions <- gm_joined_data %>%
+  filter(promo == 1) %>%
+  group_by(brand, iri_key) %>%
+  summarise(number_of_promo_weeks_per_store = n())
+
+promotions <- promotions %>%
+  group_by(brand) %>%
+  summarise(number_of_stores_with_promos = n(),
+            total_promo_weeks_across_stores = sum(number_of_promo_weeks_per_store))
+
+promo_stores <- promotions %>%
+  ggplot(mapping = aes(x = brand, y = number_of_stores_with_promos, fill = brand )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "Number of Stores with Promotions", y = "Count of Stores", x = "") +
+  coord_flip()
+
+promo_weeks <- promotions %>%
+  ggplot(mapping = aes(x = brand, y = total_promo_weeks_across_stores, fill = brand )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "Number of weeks with Promotions", subtitle = "total promo weeks across all stores", y = "Count of Promo Weeks", x = "") +
+  coord_flip()
+
+promo_stores / promo_weeks
+```
+
+
+```{r}
+# create customized theme function starting with theme_classic()
+clean_theme <- theme_classic() +
+  theme(legend.direction = "horizontal", # create horizontal legend
+        legend.position = "bottom", # put legend at bottom of graph
+        legend.justification='left', # align legend to the left
+        legend.title = element_blank(), # remove legend title
+        axis.line.y = element_blank(), # remove y-axis line
+        axis.ticks.y = element_blank(), # remove y-axis ticks
+        axis.ticks.x = element_blank(), # remove x-axis ticks
+        plot.title = element_text(face = "bold", size = 15)) # make graph title bold and a larger font
+```
+
+
+### Toasted flavored products
+
+#### Promotion Analysis
+
+    - set up data
+
+```{r message=FALSE, warning=FALSE}
+toasted_promo_price_weekly <- gm_total_sales %>%
+  filter(promo == 1, flavor == "TOASTED") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_promo_price = median(price)) %>%
+  select(-flavor)
+
+toasted_average_non_promo_weekly_price<- gm_total_sales %>%
+  filter(promo == 0, flavor == "TOASTED") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_non_promo_price = median(price))%>%
+  select(-flavor)
+
+
+toasted_average_promo_weekly_units <- gm_joined_data %>%
+  filter(promo == 1, flavor == "TOASTED") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_promo_units = median(units))%>%
+  select(-flavor)
+
+
+toasted_average_non_promo_weekly_units <- gm_joined_data %>%
+  filter(promo == 0, flavor == "TOASTED") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_non_promo_units = median(units))%>%
+  select(-flavor)
+
+
+toasted_average_promo_weekly_store_count <- gm_joined_data %>%
+  filter(promo == 1, flavor == "TOASTED") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(promo_store_count = n())%>%
+  select(-flavor)
+
+
+toasted_average_no_promo_weekly_store_count <-gm_joined_data %>%
+  filter(promo == 0, flavor == "TOASTED") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(no_promo_store_count = n())%>%
+  select(-flavor)
+
+
+toasted_weekly_promo_analysis <- right_join(toasted_promo_price_weekly, toasted_average_non_promo_weekly_price, by = c("brand", "week")) 
+
+toasted_weekly_promo_analysis <-  right_join(toasted_weekly_promo_analysis,  toasted_average_promo_weekly_units, by = c("brand", "week"))
+
+toasted_weekly_promo_analysis <-  right_join(toasted_weekly_promo_analysis,  toasted_average_non_promo_weekly_units, by = c("brand", "week"))
+
+toasted_weekly_promo_analysis <-  right_join(toasted_weekly_promo_analysis,  toasted_average_promo_weekly_store_count, by = c("brand", "week"))
+
+toasted_weekly_promo_analysis <-  right_join(toasted_weekly_promo_analysis,  toasted_average_no_promo_weekly_store_count, by = c("brand", "week"))
+
+```
+
+    - Look at Average Weekly Promotion pricing for each brand for toasted products
+
+```{r}
+#Weekly promo prices by brand for regular products
+toasted_promo_weekly_price <- toasted_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = average_promo_price, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "General Mills toasted products are typically priced lower than \nKelloggs when there is a promotion", subtitle = "Average weekly price for toasted flavored products") +
+  ylab("Average Promo Price") +
+  xlab("Week") +
+  clean_theme
+
+toasted_promo_weekly_price
+```
+
+    - Look at average units sold at promotion prices
+
+```{r}
+#Weekly promo prices by brand for toasted products
+
+min_lim <- min(toasted_weekly_promo_analysis$average_promo_price[toasted_weekly_promo_analysis$brand=='KELLOGGS'])
+max_lim <- max(toasted_weekly_promo_analysis$average_promo_price[toasted_weekly_promo_analysis$brand=='KELLOGGS'])
+
+toasted_most_competitive_promo_price <- toasted_weekly_promo_analysis %>%
+  ggplot(mapping = aes(x = average_promo_price, y = average_promo_units, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "Most competitive promotion price is around $2.50 \nfor toasted flavored products") +
+  ylab("Units Sold") +
+  xlab("Average Price") +
+  clean_theme +
+  geom_vline(xintercept = 2.50, color = "red") +
+  scale_x_continuous(breaks = c(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3, 3.5),
+                     labels=scales::dollar_format(),
+                     limits = c(min_lim, 3.5)) 
+
+toasted_most_competitive_promo_price
+```
+
+
+    - Look at the number of stores running promotions for each brand
+
+```{r}
+#Weekly promo prices by brand for regular products
+toasted_store_count_promo <- toasted_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = promo_store_count, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "General Mills should run promotions in more stores", subtitle = "Kelloggs consistently runs more in store promotions per week \nthan General Mills for toasted products") +
+  ylab("Number of stores with promotions") +
+  xlab("Week") +
+  clean_theme 
+
+toasted_store_count_promo
+```
+
+    - show non-promotion analysis in some cohesive way  (below is not it)
+
+```{r}
+toasted_promo_weekly_price + toasted_most_competitive_promo_price / toasted_store_count_promo
+```
+
+#### Non-Promotion Analysis
+
+    - Look at Average Weekly pricing for each brand when there isnt a promotion
+
+```{r}
+#Weekly non=promo prices by brand for regular products
+toasted_nonpromo_weekly_price <- toasted_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = average_non_promo_price, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "Average price for toasted flavored products \nwhen there is no promotion") +
+  ylab("Average Non-promo Price") +
+  xlab("Week") +
+  clean_theme
+
+toasted_nonpromo_weekly_price
+```
+
+    - Look at average units sold for non-promotion prices
+
+```{r}
+#Weekly promo prices by brand for toasted products
+min_lim <- min(toasted_weekly_promo_analysis$average_non_promo_price[toasted_weekly_promo_analysis$brand=='KELLOGGS'])
+max_lim <- max(toasted_weekly_promo_analysis$average_non_promo_price[toasted_weekly_promo_analysis$brand=='KELLOGGS'])
+
+
+toasted_most_competitive_nonpromo_price <- toasted_weekly_promo_analysis %>%
+  ggplot(mapping = aes(x = average_non_promo_price, y = average_non_promo_units, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "Most competitive non-promotion price is around $3.59 \nfor toasted flavored products") +
+  ylab("Units Sold") +
+  xlab("Average Price") +
+  clean_theme +
+  geom_vline(xintercept = 3.59, color = "red")+
+  scale_x_continuous(labels=scales::dollar_format(),
+                     limits = c(min_lim, max_lim)) 
+
+toasted_most_competitive_nonpromo_price
+```
+
+    - Look at the number of stores selling toasted products each week for each brand
+
+```{r}
+toasted_store_count_nonpromo <- toasted_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = no_promo_store_count, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "General Mills should sell toasted products in more stores", subtitle = "Kelloggs typically sells their products in \nmore in stores than General Mills throughout the year") +
+  ylab("Number of stores with promotions") +
+  xlab("Week") +
+  clean_theme 
+toasted_store_count_nonpromo
+```
+
+    - show non-promotion analysis in some cohesive way  (below is not it)
+
+```{r}
+toasted_nonpromo_weekly_price + toasted_most_competitive_nonpromo_price / toasted_store_count_nonpromo
+```
+
+
+### Regular Flavored Products
+
++ Looking at promotion pricing, units sold and number of stores with weekly in-store promotions
+
+    - Set up data 
+
+```{r message=FALSE, warning=FALSE}
+regular_promo_price_weekly <- gm_joined_data %>%
+  filter(promo == 1, flavor == "REGULAR") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_promo_price = median(price)) %>%
+  select(-flavor)
+
+regular_average_non_promo_weekly_price<- gm_joined_data %>%
+  filter(promo == 0, flavor == "REGULAR") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_non_promo_price = median(price)) %>%
+  select(-flavor)
+
+regular_average_promo_weekly_units <- gm_joined_data %>%
+  filter(promo == 1, flavor == "REGULAR") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_promo_units = median(units)) %>%
+  select(-flavor)
+
+regular_average_non_promo_weekly_units <- gm_joined_data %>%
+  filter(promo == 0, flavor == "REGULAR") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(average_non_promo_units = median(units)) %>%
+  select(-flavor)
+
+regular_average_promo_weekly_store_count <- gm_joined_data %>%
+  filter(promo == 1, flavor == "REGULAR") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(promo_store_count = n()) %>%
+  select(-flavor)
+
+regular_average_no_promo_weekly_store_count <-gm_joined_data %>%
+  filter(promo == 0, flavor == "REGULAR") %>%
+  group_by(brand, week, flavor) %>%
+  summarise(no_promo_store_count = n()) %>%
+  select(-flavor)
+
+regular_weekly_promo_analysis <- right_join(regular_promo_price_weekly, regular_average_non_promo_weekly_price, by = c("brand", "week")) 
+
+regular_weekly_promo_analysis <-  right_join(regular_weekly_promo_analysis, regular_average_promo_weekly_units, by = c("brand", "week"))
+
+regular_weekly_promo_analysis <-  left_join(regular_weekly_promo_analysis, regular_average_non_promo_weekly_units, by = c("brand", "week"))
+
+regular_weekly_promo_analysis <-  right_join(regular_weekly_promo_analysis, regular_average_promo_weekly_store_count, by = c("brand", "week"))
+
+regular_weekly_promo_analysis <-  left_join(regular_weekly_promo_analysis, regular_average_no_promo_weekly_store_count, by = c("brand", "week"))
+
+```
+
+#### Promotion Analysis
+
+    - Look at Average Weekly Promotion pricing for each brand
+
+```{r}
+#Weekly promo prices by brand for regular products
+regular_promo_weekly_price <- regular_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = average_promo_price, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "General Mills regular products are typically priced lower than \nKelloggs when there is a promotion", subtitle = "Average weekly price for regular flavored products") +
+  ylab("Average Promo Price") +
+  xlab("Week") +
+  clean_theme
+
+regular_promo_weekly_price
+```
+
+    - Look at average units sold at promotion prices
+
+```{r}
+#Weekly promo prices by brand for toasted products
+
+min_lim <- min(regular_weekly_promo_analysis$average_promo_price[regular_weekly_promo_analysis$brand=='KELLOGGS'])
+max_lim <- max(regular_weekly_promo_analysis$average_promo_price[regular_weekly_promo_analysis$brand=='KELLOGGS'])
+
+regular_most_competitive_promo_price <- regular_weekly_promo_analysis %>%
+  ggplot(mapping = aes(x = average_promo_price, y = average_promo_units, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "Most competitive promotion price is around $2.74 \nfor regular flavored products") +
+  ylab("Units Sold") +
+  xlab("Average Price") +
+  clean_theme +
+  geom_vline(xintercept = 2.74, color = "red") +
+  scale_x_continuous(breaks = c(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3, 3.5),
+                     labels=scales::dollar_format(),
+                     limits = c(min_lim, 3.5)) 
+
+regular_most_competitive_promo_price
+```
+
+    - Look at the number of stores running promotions for each brand
+
+```{r}
+#Weekly promo prices by brand for regular products
+regular_store_count_promo <- regular_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = promo_store_count, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "General Mills should run promotions in more stores", subtitle = "Kelloggs consistently runs more in store promotions per week \nthan General Mills") +
+  ylab("Number of stores with promotions") +
+  xlab("Week") +
+  clean_theme +
+  clean_theme
+
+regular_store_count_promo
+```
+
+    - show promotion analysis in some cohesive way  (below is not it)
+
+```{r}
+#regular_promo_weekly_price + regular_most_competitive_promo_price / regular_store_count_promo
+```
+
+
+#### Non-Promotion Analysis
+
+    - Look at Average Weekly pricing for each brand when there isnt a promotion
+
+```{r}
+#Weekly non=promo prices by brand for regular products
+regular_nonpromo_weekly_price <- regular_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = average_non_promo_price, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "General Mills products are typically priced lower than \nKelloggs when there is no promotion", subtitle = "Average price for regular flavored products") +
+  ylab("Average Non-promo Price") +
+  xlab("Week") +
+  clean_theme
+
+regular_nonpromo_weekly_price
+```
+
+    - Look at average units sold for non-promotion prices
+
+```{r}
+#Weekly promo prices by brand for toasted products
+
+min_lim <- min(regular_weekly_promo_analysis$average_non_promo_price[regular_weekly_promo_analysis$brand=='KELLOGGS'])
+max_lim <- max(regular_weekly_promo_analysis$average_non_promo_price[regular_weekly_promo_analysis$brand=='KELLOGGS'])
+
+regular_most_competitive_nonpromo_price <- regular_weekly_promo_analysis %>%
+  ggplot(mapping = aes(x = average_non_promo_price, y = average_non_promo_units, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "Most competitive non-promotion price is around $4.17 \nfor regular flavored products") +
+  ylab("Units Sold") +
+  xlab("Average Price") +
+  clean_theme +
+  geom_vline(xintercept = 4.17, color = "red") +
+  scale_x_continuous(labels=scales::dollar_format(),
+                     limits = c(min_lim, max_lim)) 
+
+regular_most_competitive_nonpromo_price
+```
+
+    - Look at the number of stores selling regular products each week for each brand
+
+```{r}
+regular_store_count_nonpromo <- regular_weekly_promo_analysis %>%
+  ggplot(mapping= aes(x = week, y = no_promo_store_count, group = brand, color = brand)) +
+  geom_smooth(method = "loess", se = FALSE) +
+  ggtitle(label = "General Mills should sell products in more stores", subtitle = "Kelloggs consistently sells their products in \nmore in stores than General Mills") +
+  ylab("Number of stores with promotions") +
+  xlab("Week") +
+  clean_theme +
+  clean_theme
+regular_store_count_nonpromo
+```
+
+    - show non-promotion analysis in some cohesive way  (below is not it)
+
+```{r}
+regular_nonpromo_weekly_price + regular_most_competitive_nonpromo_price / regular_store_count_nonpromo
+```
+
+### Advertisement Frequency
+
+```{r message=FALSE, warning=FALSE}
+ad_week_counts <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  select(ad, brand, week) %>%
+  distinct() %>%
+  group_by(brand, ad) %>%
+  summarise(count_of_weeks = n())
+
+store_ads <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  group_by(brand, iri_key, ad) %>%
+  summarise(number_of_ads = n())
+
+ads <- store_ads %>%
+  group_by(brand, ad) %>%
+  summarise(number_of_stores_with_ads = n(),
+            total_ad_weeks_across_stores = sum(number_of_ads))
+
+store_ads <- ads %>%
+  ggplot(mapping = aes(x = brand, y = number_of_stores_with_ads, fill = ad )) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Number of Stores with Ads", y = "Count of Stores", x = "") +
+  coord_flip()
+
+week_ads <- ads %>%
+  ggplot(mapping = aes(x = brand, y = number_of_stores_with_ads, fill = ad )) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Number of weeks with Ads", subtitle = "total ad weeks across all stores", y = "Count of Ad Weeks", x = "") +
+  coord_flip()
+
+store_ads / week_ads
+```
+
+# Statistical EDA
+
+## General Mills Overall Performance
+
+### Is there a difference in promotion sales of Generals Mills products compared to the competiton
+
+Null: There is no difference in product sales of General Mills compared to Kelloggs and Post
+
+Alternative: Product sales between General Mills and the competition differs
+
+```{r}
+chisq.test(table(gm_total_sales$promo, gm_total_sales$brand))
+```
+
++ Small p value so we reject the null that there is no difference in sales
+
+    - From the chi-square test we can not tell directionationly
+    
+```{r}
+# Make table of counts to calculate confidence interval
+P_B_n <- gm_total_sales %>%
+  group_by(promo, brand) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+P_B_n_ci <- multinomialCI(t(P_B_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+P_B_tab <- gm_total_sales %>%
+  group_by(promo, brand) %>%
+  summarise(prop = round(n()/sum(nrow(gm_total_sales)), 3))
+
+# add the confidence interval to the table of proportions
+P_B_tab$ci_1 <- round(P_B_n_ci[,1], 3)
+P_B_tab$ci_u <- round(P_B_n_ci[,2], 3)
+
+htmlTable(P_B_tab)
+```
+
++ All Brands are statistically different from 0, so there is a difference across the board
+    
+    - More analysis needed to determine direction
+    
+```{r}
+# Graph of proportions with confidence intervals
+P_B_tab %>% 
+  ggplot(aes(x = brand, y = prop, fill = promo)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -.5, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++ Kelloggs reliably sells the most units in both on and off promotion
+
+    - We reject the null hypothesis that General Mills performs equally to Kelloggs and Post
+    - General Mills lags behing kelloggs in both scenarios at a 99% confidence interval
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_total_sales %>%
+  mutate(brand = as.integer(brand), promo = as.integer(promo)) %>%
+  select(brand, promo) %>% 
+  chart.Correlation()
+
+correlation_chart
+```
+
++ Not practically significant
+
+    - Since the correlation coefficient is small
+
+## General Mills Promotion Performance
+
+### Is there a difference in promotion performance (units sold) over cereal types
+
+Null: During a promotion all brand's cereal performs similarly in units sold
+
+Alternate: Product performance differs among the brands during a promotion
+
+```{r}
+chisq.test(table(gm_total_sales$promo, gm_total_sales$cereal))
+```
+
++ The p value is small so we reject the null that cereals perform similarly in units sold
+    
+```{r}
+# Make table of counts to calculate confidence interval
+P_C_n <- gm_total_sales %>%
+  group_by(promo, cereal) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+P_C_n_ci <- multinomialCI(t(P_C_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+P_C_tab <- gm_total_sales %>%
+  group_by(promo, cereal) %>%
+  summarise(prop = round(n()/sum(nrow(gm_total_sales)), 3))
+
+# add the confidence interval to the table of proportions
+P_C_tab$ci_1 <- round(P_C_n_ci[,1], 3)
+P_C_tab$ci_u <- round(P_C_n_ci[,2], 3)
+
+htmlTable(P_C_tab)
+```
+
++ All cereals are statistically different from 0, so there is a difference across the board
+    
+    - More analysis needed to determine direction
+
+```{r}
+# Graph of proportions with confidence intervals
+P_C_tab %>% 
+  ggplot(aes(x = cereal, y = prop, fill = promo)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -1, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++ All cereals reliably sells the most units when there is no promotion
+
+    - We reject the null hypothesis that cereals performs equally during a promotion
+    - It appears the cereal spread decreases when cereals are on promotion
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_total_sales %>%
+  mutate(cereal = as.integer(cereal), promo = as.integer(promo)) %>%
+  select(cereal, promo) %>% 
+  chart.Correlation()
+```
+
++ The relationship between cereals is statistically significant but not practically significant
+
+### Is there a difference among General Mills' cereal products performance during a promotion *****************************************************************
+
+Null: All General Mills cereals perform similarly during a promotion
+
+Alternative: Different General Mills cereals perform differently during a promotion
+
+```{r}
+chisq.test(table(gm_only$promo, gm_only$cereal))
+```
+
++ Due to the small p value we reject the null that GM cereals perform the same under a promotion
+
+    - More work needed to show performance
+    
+```{r}
+# Make table of counts to calculate confidence interval
+GM_P_C_n <- gm_only %>%
+  group_by(promo, cereal) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+GM_P_C_n_ci <- multinomialCI(t(GM_P_C_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+GM_P_C_tab <- gm_only %>%
+  group_by(promo, cereal) %>%
+  summarise(prop = round(n()/sum(nrow(gm_only)), 3))
+
+# add the confidence interval to the table of proportions
+GM_P_C_tab$ci_1 <- round(GM_P_C_n_ci[,1], 3)
+GM_P_C_tab$ci_u <- round(GM_P_C_n_ci[,2], 3)
+
+htmlTable(GM_P_C_tab)
+```
+
++ All values are statistically different from zero so there is a difference in performance
+    
+```{r}
+# Graph of proportions with confidence intervals
+GM_P_C_tab %>% 
+  ggplot(aes(x = cereal, y = prop, fill = promo)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -1, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++ 
+
+    - We reject the null hypothesis that cereals performs equally during a promotion
+    - It appears the cereal spread decreases when cereals are on promotion
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_only %>%
+  mutate(cereal = as.integer(cereal), promo = as.integer(promo)) %>%
+  select(cereal, promo) %>% 
+  chart.Correlation()
+
+correlation_chart
+```
+
++ The relationship between cereal and promo is statistically significant and practically significant
+
+
+### Is there a difference in promotion performance (units sold) over flavor types
+
+Null: During a promotion all brand's flavors perform similarly in units sold
+
+Alternate: Product performance differs among the flavors during a promotion
+
+```{r}
+chisq.test(table(gm_total_sales$promo, gm_total_sales$flavor))
+```
+
++ The p value is small so we reject the null that flavors perform similarly in units sold
+    
+```{r}
+# Make table of counts to calculate confidence interval
+P_D_n <- gm_total_sales %>%
+  group_by(promo, flavor) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+P_D_n_ci <- multinomialCI(t(P_D_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+P_D_tab <- gm_total_sales %>%
+  group_by(promo, flavor) %>%
+  summarise(prop = round(n()/sum(nrow(gm_total_sales)), 3))
+
+# add the confidence interval to the table of proportions
+P_D_tab$ci_1 <- round(P_D_n_ci[,1], 3)
+P_D_tab$ci_u <- round(P_D_n_ci[,2], 3)
+
+htmlTable(P_D_tab)
+```
+
++ All flavors are statistically different from 0, so there is a difference across the board
+    
+    - More analysis needed to determine direction
+
+```{r}
+# Graph of proportions with confidence intervals
+P_D_tab %>% 
+  ggplot(aes(x = flavor, y = prop, fill = promo)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -1, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++ All flavors reliably sells the most units when there is no promotion
+
+    - We reject the null hypothesis that flavors performs equally during a promotion
+    - It appears the flavors spread decreases when cereals are on promotion
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_total_sales %>%
+  mutate(flavor = as.integer(flavor), promo = as.integer(promo)) %>%
+  select(flavor, promo) %>% 
+  chart.Correlation()
+
+correlation_chart
+```
+
++ The relationship between flavor and promo is statistically significant but not practically significant
+
+### Is there a difference in General Mills product performance based on flavors during a promotion
+
+Null: All flavors perform similarly during a promotion
+
+Alternative: Different flavors perform differently during a promotion
+
+```{r}
+chisq.test(table(gm_only$promo, gm_only$flavor))
+```
+
++ We reject the null that all flavors perform similarly during a promotion
+    
+```{r}
+# Make table of counts to calculate confidence interval
+GM_P_F_n <- gm_only %>%
+  group_by(promo, flavor) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+GM_P_F_n_ci <- multinomialCI(t(GM_P_F_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+GM_P_F_tab <- gm_only %>%
+  group_by(promo, flavor) %>%
+  summarise(prop = round(n()/sum(nrow(gm_only)), 3))
+
+# add the confidence interval to the table of proportions
+GM_P_F_tab$ci_1 <- round(GM_P_F_n_ci[,1], 3)
+GM_P_F_tab$ci_u <- round(GM_P_F_n_ci[,2], 3)
+
+htmlTable(GM_P_F_tab)
+```
+
++ All flavors are statistically different from 0, so there is a difference across the board
+    
+    - More analysis needed to determine direction
+
+```{r}
+# Graph of proportions with confidence intervals
+GM_P_F_tab %>% 
+  ggplot(aes(x = flavor, y = prop, fill = promo)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -1, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++ All flavors reliably sells the most units when there is no promotion
+
+    - We reject the null hypothesis that flavors performs equally during a promotion
+    - It appears the flavors spread decreases when cereals are on promotion
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_only %>%
+  mutate(flavor = as.integer(flavor), promo = as.integer(promo)) %>%
+  select(flavor, promo) %>% 
+  chart.Correlation()
+
+correlation_chart
+```
+
++ Not practically significant
+
+## General Mills Ad performance
+
+### Is there a difference in Ad performance in units sold between brands
+
+Null: There is no difference in ad performance between brands
+
+Alternative: Ad performance varies between brands
+
+```{r}
+chisq.test(table(gm_total_sales$ad, gm_total_sales$brand))
+```
+
++ Small p value so we reject the null that there is no difference in ad usage
+
+    - From the chi-square test we can not tell directionationly
+    
+```{r}
+# Make table of counts to calculate confidence interval
+A_B_n <- gm_total_sales %>%
+  group_by(ad, brand) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+A_B_n_ci <- multinomialCI(t(A_B_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+A_B_tab <- gm_total_sales %>%
+  group_by(ad, brand) %>%
+  summarise(prop = round(n()/sum(nrow(gm_total_sales)), 3))
+
+# add the confidence interval to the table of proportions
+A_B_tab$ci_1 <- round(A_B_n_ci[,1], 3)
+A_B_tab$ci_u <- round(A_B_n_ci[,2], 3)
+
+htmlTable(A_B_tab)
+```
+
++ All Brands are statistically different from 0, so there is a difference across the board
+    
+    - More analysis needed to determine direction
+    
+```{r}
+# Graph of proportions with confidence intervals
+A_B_tab %>% 
+  ggplot(aes(x = brand, y = prop, fill = ad)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -.5, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++ All Brands reliably sell the most units when there is no advertisement
+
+    - We reject the null hypothesis that General Mills performs equally to Kelloggs and Post with ad useage
+    - General Mills lags behing kelloggs in both scenarios at a 99% confidence interval
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_total_sales %>%
+  mutate(brand = as.integer(brand), ad = as.integer(ad)) %>%
+  select(brand, ad) %>% 
+  chart.Correlation()
+
+correlation_chart
+```
+
++ Not practically significant
+
+    - Since the correlation coefficient is small
+
+
+### Is there a difference among General Mills' product performance during ad usage
+
+Null: There is no difference in product performance with ad usage
+
+Alternative: Product sales differ with ad usage
+
+```{r}
+chisq.test(table(gm_only$ad, gm_only$cereal))
+```
+
++ We reject the null that all products perform similarly during ads
+    
+```{r}
+# Make table of counts to calculate confidence interval
+GM_A_C_n <- gm_only %>%
+  group_by(ad, cereal) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+GM_A_C_n_ci <- multinomialCI(t(GM_A_C_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+GM_A_C_tab <- gm_only %>%
+  group_by(ad, cereal) %>%
+  summarise(prop = round(n()/sum(nrow(gm_only)), 3))
+
+# add the confidence interval to the table of proportions
+GM_A_C_tab$ci_1 <- round(GM_A_C_n_ci[,1], 3)
+GM_A_C_tab$ci_u <- round(GM_A_C_n_ci[,2], 3)
+
+htmlTable(GM_A_C_tab)
+```
+
++ All products are statistically different from 0, so there is a difference across the board
+    
+    - More analysis needed to determine direction
+
+```{r}
+# Graph of proportions with confidence intervals
+GM_A_C_tab %>% 
+  ggplot(aes(x = cereal, y = prop, fill = ad)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -1, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++
+
+    - We reject the null hypothesis that products performs equally during a promotion
+    - It appears the products spread decreases when cereals are on promotion
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_only %>%
+  mutate(cereal = as.integer(cereal), ad = as.integer(ad)) %>%
+  select(cereal, ad) %>% 
+  chart.Correlation()
+
+correlation_chart
+```
+
++ The relationship between cereal and ad is statistically significant but not practically significant
+
+### Is there a difference among General Mills' flavor performance during ad usage
+
+Null: All flavors perform similarly during ad usage
+
+Alternative: Flavor performance changes with ad usage
+
+```{r}
+chisq.test(table(gm_only$ad, gm_only$flavor))
+```
+
++ We reject the null that all flavors perform similarly during ads
+    
+```{r}
+# Make table of counts to calculate confidence interval
+GM_A_F_n <- gm_only %>%
+  group_by(ad, flavor) %>%
+  summarise(n = n())
+
+# Calculate confidence interval using multinomial
+GM_A_F_n_ci <- multinomialCI(t(GM_A_F_n[,3]), 0.01)
+
+# Create a table with proportions that is ggplot friendly
+GM_A_F_tab <- gm_only %>%
+  group_by(ad, flavor) %>%
+  summarise(prop = round(n()/sum(nrow(gm_only)), 3))
+
+# add the confidence interval to the table of proportions
+GM_A_F_tab$ci_1 <- round(GM_A_F_n_ci[,1], 3)
+GM_A_F_tab$ci_u <- round(GM_A_F_n_ci[,2], 3)
+
+htmlTable(GM_A_F_tab)
+```
+
++ All flavors are statistically different from 0, so there is a difference across the board
+    
+    - More analysis needed to determine direction
+
+```{r}
+# Graph of proportions with confidence intervals
+GM_A_F_tab %>% 
+  ggplot(aes(x = flavor, y = prop, fill = ad)) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_text(aes(label = round(prop, 2)), vjust = -1, color = "black", # vjust moves labels above CI
+            position = position_dodge(0.9), size = 4) +
+  geom_errorbar(aes(ymin = ci_1, ymax = ci_u), 
+                width = 0.4, position = position_dodge(0.9))
+```
+
++
+
+    - We reject the null hypothesis that flavors performs equally during a promotion
+    - It appears the flavors spread decreases when cereals are on promotion
+    
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- gm_only %>%
+  mutate(flavor = as.integer(flavor), ad = as.integer(ad)) %>%
+  select(flavor, ad) %>% 
+  chart.Correlation()
+
+correlation_chart
+```
+
++ The relationship between flavor and ad is statistically significant but not practically significant
+
+## Store Performance
+
+### Promotion frequency
+
+Null: There is no difference in the number of stores running weekly promotions for each brands 
+
+Alternative: Different brands have dissimilar promotion usage in stores 
+
+```{r}
+promo_price_weekly <- gm_total_sales %>%
+  filter(promo == 1) %>%
+  group_by(brand, week) %>%
+  summarise(average_promo_price = median(price))
+
+average_non_promo_weekly_price<- gm_total_sales %>%
+  filter(promo == 0) %>%
+  group_by(brand, week) %>%
+  summarise(average_non_promo_price = median(price))
+
+average_promo_weekly_units <- gm_joined_data %>%
+  filter(promo == 1) %>%
+  group_by(brand, week) %>%
+  summarise(average_promo_units = median(units))
+
+average_non_promo_weekly_units <- gm_joined_data %>%
+  filter(promo == 0) %>%
+  group_by(brand, week) %>%
+  summarise(average_no_promo_units = median(units))
+
+average_promo_weekly_store_count <- gm_joined_data %>%
+  filter(promo == 1) %>%
+  group_by(brand, week) %>%
+  summarise(promo_store_count = n())
+
+average_no_promo_weekly_store_count <-gm_joined_data %>%
+  filter(promo == 0) %>%
+  group_by(brand, week) %>%
+  summarise(no_promo_store_count = n())
+
+weekly_promo_analysis <- right_join(promo_price_weekly, average_non_promo_weekly_price, by = c("brand", "week")) 
+weekly_promo_analysis <-  right_join(weekly_promo_analysis,  average_promo_weekly_units, by = c("brand", "week"))
+weekly_promo_analysis <-  right_join(weekly_promo_analysis,  average_non_promo_weekly_units, by = c("brand", "week"))
+weekly_promo_analysis <-  right_join(weekly_promo_analysis,  average_promo_weekly_store_count, by = c("brand", "week"))
+weekly_promo_analysis <-  right_join(weekly_promo_analysis,  average_no_promo_weekly_store_count, by = c("brand", "week"))
+
+# Set up data set for regression
+vtable(weekly_promo_analysis)
+
+# Linear regression with linear model
+store_promo_regression <- lm(promo_store_count ~ brand + week, data = weekly_promo_analysis)
+# Review output
+summary(store_promo_regression)
+```
++ Small p value so we reject the null that there is no difference in number of stores where promos are ran 
+
+```{r}
+par(mfrow = c(1, 1))
+plot(weekly_promo_analysis$promo_store_count, store_promo_regression$residuals)
+```
+
+```{r}
+# Pull out the coefficients and confidence interval for table and graph
+coe <- summary(store_promo_regression)$coefficients # get coefficients and related stats
+coe_CI <- as.data.frame(cbind(coe[-1, ], confint(store_promo_regression)[-1, ])) # find and bind CI, remove Intercept 
+
+# Rename results data frame
+names(coe_CI) <- c("estimate", "se", "t", "pval","low_CI","high_CI") 
+
+htmlTable(round(coe_CI[order(coe_CI$pval, decreasing = FALSE), ], 3))
+```
+
+```{r}
+# Cleveland dot plot of results
+ggplot(coe_CI, aes(x = estimate, y = row.names(coe_CI))) +
+  geom_point(size = 3) +
+  xlim(min(coe_CI$low_CI), max(coe_CI$high_CI)) +
+  ylab("Variable") +
+  xlab("Coefficient") +
+  theme_bw()+
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(pval))), 
+               xend = coe_CI$high_CI, color = "Blue") +
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(coe_CI$pval))), 
+               xend = coe_CI$low_CI, color = "Blue") +
+   xlab("Coefficient with Confidence Interval")+
+  geom_vline(xintercept = 0, color = "red")
+```
++ Kelloggs and Post reliably run promotions in a different number of stores than General Mills 
+
+    - We reject the null hypothesis that General Mills has the same number of stores running promotions as Kelloggs and Post
+    - General Mills runs promotions in less stores than Kelloggs and more than Post at a 99% confidence interval
+
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- weekly_promo_analysis %>%
+  mutate(brand = as.integer(brand)) %>%
+  select(brand, promo_store_count) %>% 
+  chart.Correlation()
+```
+
++ Results are practically significant
+
+
+### Toasted Flavor Pormotion frequency
+
+Null: There is no difference in promotion usage between brands for toasted flavored products
+
+Alternative: Different brands have dissimilar promotion usage for toasted flavored products
+
+```{r}
+# Set up data set for regression
+vtable(toasted_weekly_promo_analysis)
+
+# Linear regression with linear model
+toasted_store_promo_regression <- lm(promo_store_count ~ brand + week, data = toasted_weekly_promo_analysis)
+# Review output
+summary(toasted_store_promo_regression)
+```
+
++ Small p value so we reject the null that there is no difference in number of stores where promos are ran 
+
+
+```{r}
+par(mfrow = c(1, 1))
+plot(toasted_weekly_promo_analysis$promo_store_count, toasted_store_promo_regression$residuals)
+```
+
+```{r}
+# Pull out the coefficients and confidence interval for table and graph
+coe <- summary(toasted_store_promo_regression)$coefficients # get coefficients and related stats
+coe_CI <- as.data.frame(cbind(coe[-1, ], confint(toasted_store_promo_regression)[-1, ])) # find and bind CI, remove Intercept 
+
+# Rename results data frame
+names(coe_CI) <- c("estimate", "se", "t", "pval","low_CI","high_CI") 
+
+htmlTable(round(coe_CI[order(coe_CI$pval, decreasing = FALSE), ], 3))
+```
+
+```{r}
+# Cleveland dot plot of results
+ggplot(coe_CI, aes(x = estimate, y = row.names(coe_CI))) +
+  geom_point(size = 3) +
+  xlim(min(coe_CI$low_CI), max(coe_CI$high_CI)) +
+  ylab("Variable") +
+  xlab("Coefficient") +
+  theme_bw()+
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(pval))), 
+               xend = coe_CI$high_CI, color = "Blue") +
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(coe_CI$pval))), 
+               xend = coe_CI$low_CI, color = "Blue") +
+   xlab("Coefficient with Confidence Interval")+
+  geom_vline(xintercept = 0, color = "red")
+```
+
++ Kelloggs reliably runs promotions for toasted products in a different number of stores than General Mills 
+
+    - We reject the null hypothesis that General Mills has the same number of stores running promotions for toasted products as Kelloggs
+    - General Mills runs promotions for toasted products in less stores than Kelloggs at a 99% confidence interval
+
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- toasted_weekly_promo_analysis %>%
+  mutate(brand = as.integer(brand)) %>%
+  select(brand, promo_store_count) %>% 
+  chart.Correlation()
+```
+
++ results are practically significant
+
+### Regular Flavor Pormotion frequency
+
+Null: There is no difference in promotion usage between brands for regular flavored products
+
+Alternative: Different brands have dissimilar promotion usage for regular flavored products
+
+```{r}
+# Set up data set for regression
+vtable(regular_weekly_promo_analysis)
+
+# Linear regression with linear model
+regular_store_promo_regression <- lm(promo_store_count ~ brand + week, data = regular_weekly_promo_analysis)
+# Review output
+summary(regular_store_promo_regression)
+```
+
++ Small p value so we reject the null that there is no difference in number of stores where promos are ran 
+
+
+```{r}
+par(mfrow = c(1, 1))
+plot(regular_weekly_promo_analysis$promo_store_count, regular_store_promo_regression$residuals)
+```
+
+```{r}
+# Pull out the coefficients and confidence interval for table and graph
+coe <- summary(regular_store_promo_regression)$coefficients # get coefficients and related stats
+coe_CI <- as.data.frame(cbind(coe[-1, ], confint(regular_store_promo_regression)[-1, ])) # find and bind CI, remove Intercept 
+
+# Rename results data frame
+names(coe_CI) <- c("estimate", "se", "t", "pval","low_CI","high_CI") 
+
+htmlTable(round(coe_CI[order(coe_CI$pval, decreasing = FALSE), ], 3))
+```
+
+
+
+```{r}
+# Cleveland dot plot of results
+ggplot(coe_CI, aes(x = estimate, y = row.names(coe_CI))) +
+  geom_point(size = 3) +
+  xlim(min(coe_CI$low_CI), max(coe_CI$high_CI)) +
+  ylab("Variable") +
+  xlab("Coefficient") +
+  theme_bw()+
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(pval))), 
+               xend = coe_CI$high_CI, color = "Blue") +
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(coe_CI$pval))), 
+               xend = coe_CI$low_CI, color = "Blue") +
+   xlab("Coefficient with Confidence Interval")+
+  geom_vline(xintercept = 0, color = "red")
+```
+
++ Kelloggs reliably runs promotions for regular products in a different number of stores than General Mills 
+
+    - We reject the null hypothesis that General Mills has the same number of stores running promotions for regular products as Kelloggs and Post
+    - General Mills runs promotions for regular products in less stores than Kelloggs and Post at a 99% confidence interval
+
+```{r message=FALSE, warning=FALSE}
+library("PerformanceAnalytics")
+correlation_chart <- regular_weekly_promo_analysis %>%
+  mutate(brand = as.integer(brand)) %>%
+  select(brand, promo_store_count) %>% 
+  chart.Correlation()
+```
+
++ results are practically significant
+
+
+### Advertisement frequency
+
+#### Number of weekly ads ran per brand
+
+Null: There is no difference in weekly advertisement usage among brands
+
+Alternative: Different brands have different weekly advertisement frequencies
+
+```{r}
+ad_week_counts <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  select(ad, brand, week) %>%
+  distinct() %>%
+  group_by(brand, ad) %>%
+  summarise(count_of_weeks = n())
+
+store_ad <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  group_by(brand, iri_key, ad) %>%
+  summarise(number_of_ads = n())
+
+ads <- store_ad %>%
+  group_by(brand, ad) %>%
+  summarise(number_of_store_ads = n(),
+            total_number_of_ad_weeks = sum(number_of_ads)) %>%
+  select(brand, ad, number_of_store_ads, total_number_of_ad_weeks)
+
+lm_data <- left_join(gm_joined_data, ads, by = c("brand", "ad")) %>%
+  filter(ad != "NONE")
+
+weekly_ads <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  group_by(week, brand) %>%
+  mutate(advertisement = case_when(
+    ad == "A" ~ 1,
+    ad == "B" ~ 1),
+    total_weekly_ads = sum(advertisement))
+
+weekly_ads <- weekly_ads %>%
+  group_by(brand) %>%
+  mutate(average_weekly_ads = median(total_weekly_ads))
+
+# Set up data set for regression
+vtable(weekly_ads)
+
+# Linear regression with linear model
+mod <- lm(total_weekly_ads ~ brand + week, data = weekly_ads)
+# Review output
+summary(mod)
+```
+
++ Small p value so we reject the null that there is no difference in number of stores where ads are ran 
+
++ Kelloggs reliably runs advertisements for a different number of weeks 
+
+    - We reject the null hypothesis that General Mills runs ads in the same number of weeks as Kelloggs and Post
+    - General Mills runs ads for less weeks than Kelloggs and more than Post at a 99% confidence interval
+    
+
+```{r}
+par(mfrow = c(1, 1))
+plot(weekly_ads$total_weekly_ads, mod$residuals)
+```
+
+```{r}
+# Pull out the coefficients and confidence interval for table and graph
+coe <- summary(mod)$coefficients # get coefficients and related stats
+coe_CI <- as.data.frame(cbind(coe[-1, ], confint(mod)[-1, ])) # find and bind CI, remove Intercept 
+
+# Rename results data frame
+names(coe_CI) <- c("estimate", "se", "t", "pval","low_CI","high_CI") 
+
+htmlTable(round(coe_CI[order(coe_CI$pval, decreasing = FALSE), ], 3))
+```
+
+```{r}
+# Cleveland dot plot of results
+ggplot(coe_CI, aes(x = estimate, y = row.names(coe_CI))) +
+  geom_point(size = 3) +
+  xlim(min(coe_CI$low_CI), max(coe_CI$high_CI)) +
+  ylab("Variable") +
+  xlab("Coefficient") +
+  theme_bw()+
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(pval))), 
+               xend = coe_CI$high_CI, color = "Blue") +
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(coe_CI$pval))), 
+               xend = coe_CI$low_CI, color = "Blue") +
+   xlab("Coefficient with Confidence Interval")+
+  geom_vline(xintercept = 0, color = "red")
+```
+
++ all brands have a practically different number of weekly ads than GM
+
+#### Number of stores where ads are ran per brand
+
+Null: There is no difference in the number of stores where advertisement are ran among brands
+
+Alternative: Different brands have different numbers of stores where advertisement are ran
+
+```{r message=FALSE, warning=FALSE}
+weekly_ad_analysis <- gm_joined_data %>%
+  group_by(brand, week, ad) %>%
+  summarise(average_ad_price = median(price),
+            average_ad_units = median(units),
+            ad_store_count = n()) 
+
+# Set up data set for regression
+vtable(weekly_ad_analysis)
+
+# Linear regression with linear model
+store_ad_regression <- lm(ad_store_count ~ brand + week + ad, data = weekly_ad_analysis)
+# Review output
+summary(store_ad_regression)
+```
+
++ Small p value so we reject the null that there is no difference in number of stores where ads are ran 
+
++ Kelloggs reliably runs advertisements in a different number of stores 
+
+    - We reject the null hypothesis that General Mills runs ads in the same number of stores as Kelloggs and Post
+    - General Mills runs ads in less stores than Kelloggs and more than Post at a 99% confidence interval
+
+```{r}
+par(mfrow = c(1, 1))
+plot(weekly_ad_analysis$ad_store_count, store_ad_regression$residuals)
+```
+
+```{r}
+# Pull out the coefficients and confidence interval for table and graph
+coe <- summary(store_ad_regression)$coefficients # get coefficients and related stats
+coe_CI <- as.data.frame(cbind(coe[-1, ], confint(store_ad_regression)[-1, ])) # find and bind CI, remove Intercept 
+
+# Rename results data frame
+names(coe_CI) <- c("estimate", "se", "t", "pval","low_CI","high_CI") 
+
+htmlTable(round(coe_CI[order(coe_CI$pval, decreasing = FALSE), ], 3))
+```
+
+```{r}
+# Cleveland dot plot of results
+ggplot(coe_CI, aes(x = estimate, y = row.names(coe_CI))) +
+  geom_point(size = 3) +
+  xlim(min(coe_CI$low_CI), max(coe_CI$high_CI)) +
+  ylab("Variable") +
+  xlab("Coefficient") +
+  theme_bw()+
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(pval))), 
+               xend = coe_CI$high_CI, color = "Blue") +
+  geom_segment(aes(yend = reorder(row.names(coe_CI),desc(coe_CI$pval))), 
+               xend = coe_CI$low_CI, color = "Blue") +
+   xlab("Coefficient with Confidence Interval")+
+  geom_vline(xintercept = 0, color = "red")
+```
+
++ all brands have a practically different number of stores that run ads 
+
+## Professional quality visual for memo
+
+### Ad findings
+```{r}
+store_ads <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  group_by(brand, iri_key, ad) %>%
+  summarise(number_of_ads = n())
+
+ads <- store_ads %>%
+  group_by(brand, ad) %>%
+  summarise(number_of_stores_with_ads = n(),
+            total_ad_weeks_across_stores = sum(number_of_ads))
+
+# Create graph for use in memo
+store_ads_final <- ads %>%
+  ggplot(mapping = aes(x = reorder(brand, number_of_stores_with_ads), y = number_of_stores_with_ads, fill = ad )) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Kelloggs Runs the Most Ads In the Most Stores",
+       subtitle = "Leading in both small and medium sized ads", y = "Stores", x = "", fill = "Advertisment Size") +
+  coord_flip() + 
+  theme_classic() +
+  theme(axis.line.y = element_blank()) +
+  scale_fill_manual(values = c("#CCCCFF", "#336699"), labels = c("Small Ad", "Medium Ad"))
+
+ggsave(filename = "store_ads_final.png", plot = store_ads_final)
+
+store_ads_final
+```
+
+
+```{r}
+promotions <- gm_joined_data %>%
+  filter(promo == 1) %>%
+  group_by(brand, iri_key) %>%
+  summarise(number_of_promo_weeks_per_store = n())
+
+promotions <- promotions %>%
+  group_by(brand) %>%
+  summarise(number_of_stores_with_promos = n(),
+            total_promo_weeks_across_stores = sum(number_of_promo_weeks_per_store))
+
+promo_stores <- promotions %>%
+  ggplot(mapping = aes(x = reorder(brand, number_of_stores_with_promos), y = number_of_stores_with_promos, fill = brand )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "Kelloggs runs the most in-store promotions", 
+       subtitle = "Leading in number of stores running promos", 
+       y = "Stores", x = "") +
+  coord_flip()+
+  clean_theme +
+  theme(axis.line.y = element_blank()) +
+  scale_fill_manual(values = c("darkblue", "#CCCCFF", "#336699"))
+
+promo_weeks <- promotions %>%
+  ggplot(mapping = aes(x = reorder(brand, total_promo_weeks_across_stores), y = total_promo_weeks_across_stores, fill = brand )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "", 
+       subtitle = "Leading in number of weeks across stores running promos",
+       y = "Total Promo Weeks", x = "") +
+  coord_flip()+
+  clean_theme +
+  theme(axis.line.y = element_blank()) +
+  scale_fill_manual(values = c("darkblue", "#CCCCFF", "#336699"))
+
+promo_final <- promo_stores / promo_weeks
+
+ggsave(filename = "promo_final.png", plot = promo_final)
+
+promo_final
+```
+
+
+
+

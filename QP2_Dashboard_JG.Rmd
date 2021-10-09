@@ -1,0 +1,257 @@
+---
+title: "General Mills Competitive Promo/Ad Analysis"  
+subtitle: "In-store Promotions and Advertisement Displays"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  flexdashboard::flex_dashboard:
+    social: menu
+    orientation: columns
+    vertical_layout: fill
+    source_code: embed
+    theme: spacelab
+runtime: shiny
+---
+
+```{r setup, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r}
+# Course: 5210 Data Visualization
+# Purpose: Dashboard for Quick Project 2
+# Date: August 12, 2021
+# Author: Jennifer Grosz 
+```
+
+```{r echo = FALSE}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+```
+
+```{r}
+# load packages
+library(shiny)
+library(tidyverse)
+library(RColorBrewer)
+```
+
+```{r global, include=FALSE}
+# load product data
+product_data <- read.csv("../data/mtp_product_data.csv")
+# load sales data
+sales_data <- read.csv("../data/mtp_sales_data.csv")
+
+# change UPC to merge data sets
+product_data <- product_data %>%
+  # start by separating values by -."
+  separate("UPC", into = c("first", "second", "third", "fourth"), sep = "-") %>%
+  # unite columns to make UPC the same as it is in sales_data
+  unite(col = "UPC", c("second", "third", "fourth"), sep = ".") %>%
+  # drop column with leading zeros from product_data's UPC
+  select(-first)
+
+# Join data sets
+gm_joined_data <- right_join(sales_data, product_data, by = "UPC")
+
+# Create cereal variable
+# Reduce brand variable to just brand name
+gm_joined_data <- gm_joined_data %>%
+  mutate(
+    cereal = case_when(
+      str_sub(brand, 1,  7) == "GENERAL" ~ str_sub(brand, 15, -1),
+      str_sub(brand, 1, 8) == "KELLOGGS" ~ str_sub(brand, 10, -1),
+      str_sub(brand, 1, 4) == "POST" ~ str_sub(brand, 6, -1)),
+    brand = case_when(
+    str_sub(brand, 1,  7) == "GENERAL" ~ "GENERAL MILLS",
+    str_sub(brand, 1, 8) == "KELLOGGS" ~ "KELLOGGS",
+    str_sub(brand, 1, 4) == "POST" ~ "POST")
+  )
+
+# Convert variables to factors
+gm_joined_data[,'promo'] <- factor(gm_joined_data[,'promo'])
+gm_joined_data[,'ad'] <- factor(gm_joined_data[,'ad'])
+gm_joined_data[,'brand'] <- factor(gm_joined_data[,'brand'])
+gm_joined_data[,'cereal'] <- factor(gm_joined_data[,'cereal'])
+gm_joined_data[,'flavor'] <- factor(gm_joined_data[,'flavor'])
+gm_joined_data[,'package'] <- factor(gm_joined_data[,'package'])
+gm_joined_data[,'iri_key'] <- factor(gm_joined_data[,'iri_key'])  
+
+gm_joined_data <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  ungroup() %>%
+  mutate(scenario = as.factor(scenario))
+```
+
+
+```{r}
+promo_ad_analysis <- gm_joined_data %>%
+  group_by(brand, scenario) %>%
+  summarise(median_units = median(units),
+            median_price = median(price),
+            median_revenue = median_units*median_price)
+
+promo_ad_analysis <- promo_ad_analysis[,c("brand","scenario", "median_price", "median_units", "median_revenue")]
+
+# Identify factor and numeric variables
+promo_ad_analysis_fact <- promo_ad_analysis[, sapply(promo_ad_analysis, is.factor)]
+promo_ad_analysis_num <- promo_ad_analysis[, sapply(promo_ad_analysis, is.numeric)]
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+price_scenario <- promo_ad_analysis %>%
+  group_by(brand, scenario) %>%
+  select(median_revenue)
+#rate_day$day_of_week_n
+price_scenario$scenario_n <- ifelse(price_scenario$scenario == "no promo, no ad", 0,
+                                    ifelse(price_scenario$scenario == "no promo, medium ad", 1,
+                                           ifelse(price_scenario$scenario == "no promo, small ad", 2,
+                                                  ifelse(price_scenario$scenario == "with promo, no ad", 3,
+                                                         ifelse(price_scenario$scenario == "with promo, medium ad", 4, 5)))))
+price_scenario[order(desc(price_scenario$median_revenue)),]
+```
+
+```{r}
+# Create user input
+# add brand label
+price_scenario$brand <- ifelse(price_scenario$brand == "GENERAL MILLS", "General Mills",
+                             ifelse(price_scenario$brand == "KELLOGGS", "Kelloggs",
+                                    ifelse(price_scenario$brand == "POST", "Post", "All Brands")))
+```
+
+```{r}
+df <- gm_joined_data[,c("brand", "price", "units", "scenario")]
+
+# Identify factor and numeric variables
+df_fact <- df[, sapply(df, is.factor)]
+df_num <- df[, sapply(df, is.numeric)]
+```
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+  
+```{r}
+# Create user input
+sliderInput('price_range', 'Price Range', min = round(min(df$price),0), max = round(max(df$price), 0),
+                  value = c(0, 5000), step = 10, round = 0)
+
+# Select x axis variable      
+selectInput('x', 'X-Axis Variable', names(df))
+
+# Select y axis variable      
+selectInput('y', 'Y-Axis Variable', names(df_num), names(df_num)[[2]])
+      
+# Differentiate by color
+selectInput('color', 'Comparison Group', c('None', names(df_fact)), names(df_fact)[[2]])
+      
+```
+
+
+```{r}
+# Create data that is updated/filtered by slider
+live_off <- reactive({
+    df %>% 
+      filter(price >= input$price_range[1],
+            price <= input$price_range[2])
+   })
+
+```
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Boxplot
+  
+```{r}
+# Boxplot data determined by user input
+renderPlot({
+    p <- ggplot(live_off(), aes_string(x=input$x, y=input$y)) + 
+      geom_boxplot()
+    
+    if (input$color != 'None')
+      p <- p + aes_string(color=input$color)
+
+    p <- p + theme_bw()
+    
+    print(p)
+
+  })
+
+```
+
+
+### Bar chart
+
+  
+```{r}
+# Bar plot data determined by user input
+renderPlot({
+    p <- ggplot(live_off(), aes_string(x=input$x, y=input$y)) + 
+       geom_bar(stat = "summary", fun.y = "median", position = "dodge", color = "black") +
+         ylab(paste("Median of ", input$y))
+    
+    if (input$color != 'None')
+      p <- p + aes_string(fill=input$color)
+
+    p <- p + theme_bw()
+    
+    print(p)
+
+  })
+
+```
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+
+### Median Revenue Generated by Each Brand
+
+
+
+```{r}
+
+shinyApp(
+  ui = fillPage(
+    fillCol( flex = c(NA,1),
+      sidebarPanel(
+        selectInput("brand", "Brand",
+                   choices = c("General Mills","Kelloggs", "Post"), 
+                   selected = "All")
+      ),
+      plotOutput("plot", height = "100%")
+    )
+  ),
+  server = function(input, output) {
+    output$plot <- renderPlot({
+        datasetInput <- price_scenario
+        
+      if(input$brand != "All Bands"){
+        datasetInput <- price_scenario %>%
+          filter(brand == input$brand)
+      }
+        ggplot(datasetInput, aes(x = reorder(scenario, scenario_n), y = median_revenue, fill = scenario)) +
+        geom_bar(stat = "identity", position = "dodge") +
+        geom_hline(yintercept = median(datasetInput$median_revenue), color = "black") +
+        xlab("Scenario") +
+        ylab("Median Revenue") +
+        annotate("text", x = 6, y = median(datasetInput$median_revenue) + 0.001 ,
+                 label = "median", hjust = 0, vjust = -1, size = 5, color = "black", width = 2) +
+        scale_y_continuous(labels=scales::dollar_format()) +
+        ggtitle(paste("Promotions have the highest median revenue", input$brand)) +
+        theme(plot.title = element_text(size = 12, face = "bold")) +
+        scale_fill_brewer() 
+      
+    })
+  }
+,
+  options = list(height = "100%")
+)
+
+```
+

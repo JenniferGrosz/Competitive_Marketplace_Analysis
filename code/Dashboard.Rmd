@@ -1,0 +1,44 @@
+---
+title: "General Mills Competitive Marketplace Analysis"  
+subtitle: "In-store Promotions and Advertisement Displays"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  flexdashboard::flex_dashboard:
+    storyboard: TRUE
+    vertical_layout: fill
+    
+---
+
+```{r setup, echo = FALSE}
+```
+
+```{r}
+# Course: 5210 Data Visualization
+# Purpose: Dashboard for Quick Project 2
+# Date: August 12, 2021
+# Author: Jennifer Grosz 
+```
+
+```{r}
+# load libraries
+library(tidyverse)
+library(flexdashboard) # For storyboard template, note YAML setting
+library(leaflet) # Mapping html widget
+```
+
+### Understanding the competitive landscape
+
+<div style="text-align: center"> <font size="10"> Consumers are going to compare products from competing brands when making their purchasing decisions </div>
+<br>
+<div style="text-align: center"> ![](logo.jpg)  </div>
+
+
+### Where was the original Starbucks, zoom and see!
+
+```{r}
+# Map coordinates of the first Starbucks, leaflet does the rest
+p_seattle_reign_wc2 <- 
+
+```
+
+

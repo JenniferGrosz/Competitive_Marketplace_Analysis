@@ -1,0 +1,899 @@
+---
+title: 'Technical Appendix'
+subtitle: 'Data Visualization Quick Project 2'
+author: "Jennifer Grosz"
+date: "Thursday, August 12th, 2021"
+output:
+  html_document:
+    toc: true
+    toc_depth: 6
+    toc_float: true
+    number_sections: true
+---
+
+```{r}
+# Course: 5210 Data Visualization
+# Purpose: Technical Appendix for Quick Project 2
+# Date: July 29, 2021
+# Author: Jennifer Grosz 
+```
+
+```{r}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+
+# Clear environment of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+```
+
+```{r}
+# Load relevant packages used for analyzing General Mills data
+library(tidyverse) # contains ggplot2, dplyr, and several other packages used
+library(vtable) # contains vtable function for summary table of data
+library(janitor) # contains tidyverse functions for cross-tables
+library(gridExtra) # contains grid.arrange function used to combine plots in the same window
+library(patchwork) # use to put graphs together in the same frame
+library(knitr) # contains some table formatting functions
+library(kableExtra) # also contains functions used for table outputs
+library(GGally) # contains a custom correlation plot 
+library(moments) # to calculate skewness
+library(scales) # use for rounding numbers
+library(corrplot) # for correlation plot
+library(tidylog) # provides data set information reports
+library(tidyr) # provides uncount function
+library(Hmisc)
+library(MultinomialCI)
+library(htmlTable)
+library(Hmisc)
+library(colorspace)
+options(scipen = 999) # remove scientific notation
+```
+
+```{r}
+# load product data
+product_data <- read.csv("../data/mtp_product_data.csv")
+
+# load sales data
+sales_data <- read.csv("../data/mtp_sales_data.csv")
+```
+
+```{r}
+# Need to mutate UPC values to merge data sets because they're different in each data set. For example:
+# 
+# - sales_data has UPC as 01.16000.11653
+# - product_data has UPC as 00-01-16000-11653
+
+# change UPC to merge data sets
+product_data <- product_data %>%
+  # start by separating values by -."
+  separate("UPC", into = c("first", "second", "third", "fourth"), sep = "-") %>%
+  # unite columns to make UPC the same as it is in sales_data
+  unite(col = "UPC", c("second", "third", "fourth"), sep = ".") %>%
+  # drop column with leading zeros from product_data's UPC
+  select(-first)
+
+# Join data sets
+gm_joined_data <- right_join(sales_data, product_data, by = "UPC")
+```
+
+```{r}
+# Create cereal variable
+# Reduce brand variable to just brand name
+gm_joined_data <- gm_joined_data %>%
+  mutate(
+    cereal = case_when(
+      str_sub(brand, 1,  7) == "GENERAL" ~ str_sub(brand, 15, -1),
+      str_sub(brand, 1, 8) == "KELLOGGS" ~ str_sub(brand, 10, -1),
+      str_sub(brand, 1, 4) == "POST" ~ str_sub(brand, 6, -1)),
+    brand = case_when(
+    str_sub(brand, 1,  7) == "GENERAL" ~ "GENERAL MILLS",
+    str_sub(brand, 1, 8) == "KELLOGGS" ~ "KELLOGGS",
+    str_sub(brand, 1, 4) == "POST" ~ "POST")
+  )
+```
+
+```{r}
+# Convert variables to factors
+gm_joined_data[,'promo'] <- factor(gm_joined_data[,'promo'])
+gm_joined_data[,'ad'] <- factor(gm_joined_data[,'ad'])
+gm_joined_data[,'brand'] <- factor(gm_joined_data[,'brand'])
+gm_joined_data[,'cereal'] <- factor(gm_joined_data[,'cereal'])
+gm_joined_data[,'flavor'] <- factor(gm_joined_data[,'flavor'])
+gm_joined_data[,'package'] <- factor(gm_joined_data[,'package'])
+gm_joined_data[,'iri_key'] <- factor(gm_joined_data[,'iri_key'])
+```
+
+```{r}
+# Create total sales data frame
+gm_total_sales <- uncount(gm_joined_data, units)
+```
+## Promo Analysis with Ads
+
+```{r}
+promo_ad_analysis <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) 
+
+# **********
+gm_promo_ad_analysis <- promo_ad_analysis %>%
+  filter(brand == "GENERAL MILLS") %>%
+  group_by(scenario) %>%
+  summarise(median_price = median(price),
+            median_units = median(units), 
+            median_weekly_revenue = median_price*median_units)
+# **********
+# gm earns highest median revenue when there is a promo and they're running a medium ad
+
+k_promo_ad_analysis <- promo_ad_analysis %>%
+  filter(brand == "KELLOGGS") %>%
+  group_by(scenario) %>%
+  summarise(median_price = median(price),
+            median_units = median(units), 
+            median_weekly_revenue = median_price*median_units)
+
+p_promo_ad_analysis <- promo_ad_analysis %>%
+  filter(brand == "POST") %>%
+  group_by(scenario) %>%
+  summarise(median_price = median(price),
+            median_units = median(units), 
+            median_weekly_revenue = median_price*median_units)
+```
+
+
+```{r}
+#Create a custom color scale
+library(RColorBrewer)
+cols <- brewer.pal(3, "BuGn")
+gm_joined_data$brand <- factor(gm_joined_data$brand, levels = c("KELLOGGS", "GENERAL MILLS", "POST"))
+names(cols) <- levels(gm_joined_data$brand)
+colScale <- scale_colour_manual(name = c("#ece7f2", "#a6bddb", "#2b8cbe"), values = cols)
+
+gm_total_sales$brand <- factor(gm_total_sales$brand, levels = c("KELLOGGS", "GENERAL MILLS", "POST"))
+gm_joined_data$brand <- factor(gm_joined_data$brand, levels = c("KELLOGGS", "GENERAL MILLS", "POST"))
+a <- ifelse(gm_total_sales$brand == "GENERAL MILLS", "red", "grey")
+b <- ifelse(gm_joined_data$brand == "GENERAL MILLS", "red", "grey")
+```
+
+```{r}
+# create customized theme function starting with theme_classic()
+clean_theme <- theme_classic() +
+  theme(legend.direction = "horizontal", # create horizontal legend
+        legend.position = "bottom", # put legend at bottom of graph
+        legend.justification='left', # align legend to the left
+        legend.title = element_blank(), # remove legend title
+        axis.line.y = element_blank(), # remove y-axis line
+        axis.ticks.y = element_blank(), # remove y-axis ticks
+        axis.ticks.x = element_blank(), # remove x-axis ticks
+        plot.title = element_text(face = "bold", size = 15)) # make graph title bold and a larger font
+```
+
+```{r}
+rev <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  summarise(total_rev = sum(price*units),
+            total_units = sum(units)) 
+
+
+font_colors <- c("gray", "red", "gray")
+
+rev %>%
+  ggplot(mapping = aes(x = reorder(brand, total_rev), y = total_rev, fill = brand )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "Total Revenue by Brand", y = "Revenue", x = "") +
+  coord_flip() +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  clean_theme +
+  scale_fill_manual(values = c( "#a6bddb", "#336699", "#2b8cbe"), labels = c("KELLOGGS", "GENERAL MILLS", "POST")) +
+  theme(axis.text.y = element_text(colour = font_colors))
+font_colors <- c("gray", "red", "gray")
+```
+
+```{r}
+units <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  summarise(total_rev = sum(price*units),
+            total_units = sum(units)) %>%
+  ggplot(mapping = aes(x = reorder(brand, total_units), y = total_units, fill = brand )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "Total Units by Brand", y = "Units", x = "") +
+  coord_flip() + 
+  clean_theme +
+  scale_fill_manual(values = c("#a6bddb","#336699", "#2b8cbe"), labels = c("KELLOGGS", "GENERAL MILLS", "POST"))
+```
+
+
+```{r}
+promo_ad_analysis <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) 
+
+# **********
+gm_promo_ad_analysis <- promo_ad_analysis %>%
+  filter(brand == "GENERAL MILLS") %>%
+  group_by(scenario) %>%
+  summarise(median_price = median(price),
+            median_units = median(units), 
+            median_weekly_revenue = median_price*median_units)
+# **********
+# gm earns highest median revenue when there is a promo and they're running a medium ad
+font_colors <- c("black", "black", "black", "black", "black", "darkblue")
+
+gm_promo <- gm_promo_ad_analysis %>%  
+  ggplot(mapping = aes(x = reorder(scenario, median_weekly_revenue), y = median_weekly_revenue, fill = scenario )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "General Mills earns the highest median revenue \nwhen simultaneously running in-store \npromotions and medium advertisements",
+       subtitle = "this scenario increases median revenue by 31.58% compared to \nthe baseline scenario of no promo, no ad", y = "Median Revenue", x = "") +
+  coord_flip() +
+  geom_text(aes(label= dollar(median_weekly_revenue)), position=position_dodge(width=0.9), hjust = 1.5, vjust=.5,size=5, colour="black", fontface = "bold")+
+  scale_y_continuous(labels=scales::dollar_format()) +
+  clean_theme +
+  scale_fill_brewer() +
+  theme(axis.text.y = element_text(colour = font_colors),
+        plot.subtitle = element_text(color = "#808080"),
+        axis.title.x = element_text(color = "#808080"),
+        axis.text.x = element_text(color = "#808080"),
+        axis.line.x = element_line(color = "#808080"))
+
+gm_promo
+```
+
+
+```{r}
+ggsave(filename = "gm_promo.png", plot = gm_promo)
+```
+
+## no promo medium ad
+
+```{r}
+# averages
+
+## Set up data
+no_promo_medium_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "no promo, medium ad") %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold)
+
+# build plot
+no_promo_medium_ad_plot <- no_promo_medium_ad %>%  
+  ggplot(mapping = aes(x = reorder(brand, median_revenue), y = median_revenue, fill = reorder(brand, median_revenue))) +
+  clean_theme +
+  labs(title = "No promotion with medium ads",
+       subtitle = "In this scenario, General Mills' median revenue is $7.98 higher \nthan Kelloggs and $17.96 higher than Post ",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_revenue)), position=position_dodge(width=0.9), hjust = 1.5, vjust=.5,size=5, colour="black", fontface = "bold")+
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  coord_flip() +
+  scale_fill_manual(values = c( "#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST")) +
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "#808080", "blue")))
+
+
+# output plot
+no_promo_medium_ad_plot
+```
+
+```{r}
+ggsave(filename = "without_medium.png", plot = no_promo_medium_ad_plot)
+```
+
+## no promo no ad
+
+```{r}
+## nopromo no ad
+# set up data
+no_promo_no_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "no promo, no ad") %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold)
+
+# create plot
+no_promo_no_ad_plot <- no_promo_no_ad %>%  
+  ggplot(mapping = aes(x = reorder(brand, median_revenue), y = median_revenue, fill = reorder(brand, median_revenue))) +
+  clean_theme +
+    labs(title = "No promotions or advertisements",
+       subtitle = "In this scenario, General Mills' median revenue is $3.99 higher than \nKelloggs and $12.77 higher than Post",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_revenue)), position=position_dodge(width=0.9), hjust = 1.5, vjust=.5,size=5, colour="black", fontface = "bold")+
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  coord_flip() +
+  scale_fill_manual(values = c( "#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST")) +
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "#808080", "blue")))
+
+# output plot
+no_promo_no_ad_plot
+```
+
+```{r}
+ggsave(filename = "without_no.png", plot = no_promo_no_ad_plot)
+```
+
+## no promo small ad
+
+```{r}
+## nopromo small ad
+# set up data
+no_promo_small_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "no promo, small ad") %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold)
+
+# create plot
+no_promo_small_ad_plot <- no_promo_small_ad %>%  
+  ggplot(mapping = aes(x = reorder(brand, median_revenue), y = median_revenue, fill = reorder(brand, median_revenue))) +
+  clean_theme +
+    labs(title = "No promotion with small ads",
+       subtitle = "In this scenario, General Mills' median revenue is $5.67 higher than \nKelloggs and $15.96 higher than Post",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_revenue)), position=position_dodge(width=0.9), hjust = 1.5, vjust=.5,size=5, colour="black", fontface = "bold")+
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  coord_flip() +
+  scale_fill_manual(values = c( "#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "#808080", "blue")))
+
+# output plot
+no_promo_small_ad_plot
+```
+
+```{r}
+ggsave(filename = "without_small.png", plot = no_promo_small_ad_plot)
+```
+
+## with promo no ad
+
+```{r}
+## with promo no ad
+# set up data
+with_promo_no_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "with promo, no ad") %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold)
+# create plot
+with_promo_no_ad_plot <- with_promo_no_ad %>%  
+  ggplot(mapping = aes(x = reorder(brand, median_revenue), y = median_revenue, fill = reorder(brand, median_revenue))) +
+  clean_theme +
+    labs(title = "Promotions with no advertisements",
+       subtitle = "In this scenario, General Mills' 'median revenue earned is $6.00 higher than \nKelloggs and $15.00 higher than Post",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_revenue)), position=position_dodge(width=0.9), hjust = 1.5, vjust=.5,size=5, colour="black", fontface = "bold")+
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  coord_flip() +
+  scale_fill_manual(values = c( "#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "#808080", "blue")))
+
+# output plot
+with_promo_no_ad_plot
+```
+
+```{r}
+ggsave(filename = "with_no.png", plot = with_promo_no_ad_plot)
+```
+
+
+## with promo medium ad
+
+```{r}
+## with promo medium ad
+with_promo_medium_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "with promo, medium ad") %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold)
+
+with_promo_medium_ad_plot <- with_promo_medium_ad %>%  
+  ggplot(mapping = aes(x = reorder(brand, median_revenue), y = median_revenue, fill = reorder(brand, median_revenue))) +
+  clean_theme +
+      labs(title = "Promotions with medium ads",
+       subtitle = "In this scenario, General Mills' median revenue earned is $7.57 higher than \nKelloggs and $15.25 higher than Post",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_revenue)), position=position_dodge(width=0.9), hjust = 1.5, vjust=.5,size=5, colour="black", fontface = "bold")+
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  coord_flip() +
+  scale_fill_manual(values = c( "#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "#808080", "blue")))
+
+# output plot
+with_promo_medium_ad_plot
+```
+
+```{r}
+ggsave(filename = "with_medium.png", plot = with_promo_medium_ad_plot)
+```
+
+
+## with promo small ad
+
+```{r}
+## with promo small ad
+with_promo_small_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "with promo, small ad") %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold,
+            total_revenue = sum(units*price))
+
+with_promo_small_ad_plot <- with_promo_small_ad %>%  
+  ggplot(mapping = aes(x = reorder(brand, median_revenue), y = median_revenue, fill = reorder(brand, median_revenue))) +
+  clean_theme +
+      labs(title = "Promotions with small ads",
+       subtitle = "General Mills' median revenue is 22.72% lower \nthan Kelloggs in this scenario",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_revenue)), position=position_dodge(width=0.9), hjust = 1.5, vjust=.5,size=5, colour="black", fontface = "bold")+
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  coord_flip() +
+  scale_fill_manual(values = c("#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "blue", "#ff0000")))
+
+with_promo_small_ad_plot
+```
+
+
+```{r}
+ggsave(filename = "with_small.png", plot = with_promo_small_ad_plot)
+```
+
+```{r}
+with_promo_small_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "with promo, small ad") %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold) %>%
+  mutate(median_price = case_when(
+    brand == "GENERAL MILLS" ~ median_price + .00001,
+    brand %in% c("KELLOGGS", "POST") ~ median_price))
+
+price_with_small <- with_promo_small_ad %>%
+  select(brand, median_price) %>%
+  arrange(-median_price) %>%
+  ggplot(mapping = aes(x = reorder(brand, median_price), y = median_price, fill = reorder(brand, median_price))) +
+  clean_theme +
+  labs(title = "Kelloggs charges a higher average price than \nGeneral Mills in this scenario",
+       subtitle = "When there are promotions running with small ads, General Mills' \nmedian price is $0.45 lower than Kelloggs",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_price)), position=position_dodge(width=0.9), hjust = 1, vjust=.5,size=4, colour="black", fontface = "bold") +
+  coord_flip() +
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  scale_fill_manual(values = c("#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "blue", "#ff0000")))
+
+
+
+price_with_small 
+```
+
+```{r}
+
+
+ggsave(filename = "price_with_small.png", plot = price_with_small)
+
+
+```
+
+
+```{r}
+ggsave(filename = "price_with_small.png", plot = price_with_small)
+```
+
+```{r}
+with_promo_small_ad <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad")) %>%
+  filter(scenario == "with promo, small ad") %>%
+  group_by(brand) %>%
+  summarise(average_units_sold = median(units),
+            median_price = median(price),
+            median_revenue = median_price*average_units_sold,
+            total_revenue = sum(units*price))
+
+earnings <- with_promo_small_ad %>%
+  select(brand, total_revenue) %>%
+  arrange(-total_revenue) %>%
+  mutate("total revenue" = total_revenue) %>%
+  ggplot(mapping = aes(x = reorder(brand, total_revenue), y = total_revenue, fill = reorder(brand, total_revenue))) +
+  clean_theme +
+      labs(title = "General Mills generated less revenue than Kelloggs",
+       subtitle = "When there are promotions and small ads, General Mills' total annual \nrevenue is $8,946.28 lower than Kelloggs revenue earned in this scenario",
+       y = "", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(total_revenue)), position=position_dodge(width=0.9), hjust = 1, vjust=.5,size=4, colour="black", fontface = "bold") +
+  coord_flip() +
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  scale_fill_manual(values = c("#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "blue", "#ff0000")))
+
+earnings
+ggsave(filename = "earnings.png", plot = earnings)
+```
+
+
+
+
+
+
+```{r}
+no_medium_small <- no_promo_medium_ad_plot / no_promo_small_ad_plot / no_promo_no_ad_plot 
+no_medium_small
+```
+
+```{r}
+ggsave(filename = "no_medium_small.png", plot = no_medium_small)
+```
+
+```{r}
+with_med_small <- with_promo_medium_ad_plot / with_promo_small_ad_plot / with_promo_no_ad_plot
+with_med_small
+```
+
+
+```{r}
+ggsave(filename = "with_med_small.png", plot = with_med_small)
+```
+
+
+
+
+
+
+
+## total revenue generated
+
+```{r}
+gm_total_sales %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = factor(case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad"))) %>%
+  group_by(brand, scenario) %>%
+  summarise(units_sold = n(),
+            total_revenue = sum(price)) %>%  
+  ggplot(mapping = aes(x = reorder(scenario, total_revenue), y = total_revenue, fill = reorder(brand, total_revenue))) +
+  clean_theme +
+  labs(title = "Kelloggs earned more revenue across \nall promotion-advertisement scenarios than General Mills",
+       subtitle = "Despite having higher average revenue in most of these scenarios, \nlast year Kelloggs brought in revenue than General Mills",
+       y = "Total Revenue", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = TRUE) +
+  coord_flip() +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  scale_fill_manual(values = c( "#a6bddb", "#336699", "#2b8cbe"), breaks = c("KELLOGGS","GENERAL MILLS", "POST"))
+```
+
+
+
+```{r}
+promotions <- promo_ad_analysis %>%
+  group_by(brand, iri_key, scenario) %>%
+  group_by(brand, scenario) %>%
+  summarise(number_of_stores_with_promos = n())
+
+promo_stores <- promotions %>%
+  ggplot(mapping = aes(x = reorder(brand, number_of_stores_with_promos), y = number_of_stores_with_promos, fill = brand )) +
+  geom_bar(stat = "identity", position = "dodge",  show.legend = FALSE) +
+  labs(title = "General Mills should run promotions in more stores", 
+       subtitle = "Last year, Kelloggs ran promotions in 285 more stores than General Mills", 
+       y = "", x = "") +
+  geom_text(aes(label= number_of_stores_with_promos), position=position_dodge(width=0.9), hjust = 2, vjust=.5,size=4, colour="black", fontface = "bold")+
+  coord_flip()+
+  clean_theme +
+  theme(axis.line.y = element_blank(), axis.text.x=element_blank()) +
+  scale_fill_manual(values = c( "#ADD8E6", "#2b8cbe", "#a6bddb"), breaks = c("KELLOGGS","GENERAL MILLS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "blue", "#808080")))+
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank())  # remove y-axis line
+
+promo_stores
+
+
+promo_stores 
+```
+
+```{r}
+ggsave(filename = "promo_stores.png", plot = promo_stores)
+
+```
+
+```{r}
+ad_week_counts <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  select(ad, brand, week) %>%
+  distinct() %>%
+  group_by(brand, ad) %>%
+  summarise(count_of_weeks = n())
+
+store_ads <- gm_joined_data %>%
+  filter(ad != "NONE") %>%
+  group_by(brand, iri_key, ad) %>%
+  summarise(number_of_ads = n())
+
+ads <- store_ads %>%
+  group_by(brand, ad) %>%
+  summarise(number_of_stores_with_ads = n(),
+            median_weeks = median(number_of_ads))
+
+```
+
+```{r}
+ads$ad <- factor(ads$ad, levels = c("A", "B"))
+
+
+a <- ifelse(ads$brand == "GENERAL MILLS", "red", "grey")
+
+adsplot <- ads %>%
+  mutate(ad = case_when(
+    ad == "A" ~ "Medium",
+    ad == "B" ~ "Small")) %>%
+  ggplot(mapping = aes(x = reorder(brand, number_of_stores_with_ads), y = number_of_stores_with_ads, fill = reorder(ad, number_of_stores_with_ads) )) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = TRUE) +
+  coord_flip() +
+  labs(title = "General Mills should advertise in more stores", 
+       subtitle = "Last year Kelloggs displayed medium ads in 186 more stores \nand small ads in 223 more stores than General Mills.", 
+       y = "", x = "") +
+  geom_text(aes(label= number_of_stores_with_ads), position=position_dodge(width=0.9), hjust = 2, vjust=.5,size=4, colour="black", fontface = "bold")+
+  clean_theme +
+  theme(axis.line.y = element_blank(), axis.text.x=element_blank(), axis.line.x = element_blank())+
+  scale_fill_manual(values = c( "#a6bddb", "#336699"), breaks = c("Medium","Small")) +
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "blue", "#808080")))
+
+adsplot
+```
+
+
+```{r}
+ggsave(filename = "ads.png", plot = adsplot)
+```
+
+
+
+```{r}
+library(plotly)
+
+all_scenarios <- gm_joined_data %>%
+  group_by(brand, promo, ad) %>%
+  mutate(scenario = factor(case_when(
+    promo == 0 & ad == "NONE" ~ "no promo, no ad",
+    promo == 0 & ad == "A" ~ "no promo, medium ad",
+    promo == 0 & ad == "B" ~ "no promo, small ad",
+    promo == 1 & ad == "NONE" ~ "with promo, no ad",
+    promo == 1 & ad == "A" ~ "with promo, medium ad",
+    promo == 1 & ad == "B" ~ "with promo, small ad"))) %>%
+  group_by(brand, scenario) %>%
+  summarise(average_units = median(units),
+            average_price = median(price),
+            average_revenue = average_units*average_price) %>%  
+  ggplot(mapping = aes(x = reorder(scenario, average_revenue), y = average_revenue, fill = reorder(brand, average_revenue))) +
+  clean_theme +
+  labs(title = "General Mills has the highest median revenue \nfor every scenario except with promotions and \nsmall advertisements",
+       subtitle = "For General Mills, the highest median revenue is earned when using \npromos with medium ads",
+       y = "Total Revenue", x = "") +
+  geom_bar(stat = "identity", position = "dodge", show.legend = TRUE) +
+  coord_flip() +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(average_revenue)), position=position_dodge(width=0.9), hjust =1, vjust=.5,size=4, 
+            colour="black") +
+  theme(axis.line.x = element_blank(), axis.text.x=element_blank()) + # remove y-axis line
+  scale_fill_manual(values = c("#2b8cbe", "#ADD8E6", "#a6bddb"), breaks = c("GENERAL MILLS", "KELLOGGS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "#808080", "#808080", "#808080", "#808080", "#ff0000")))
+
+all_scenarios
+
+
+
+```
+
+
+
+```{r}
+ggsave(filename = "all_scenarios.png", plot = all_scenarios)
+```
+
+
+
+```{r}
+table <- promo_ad_analysis %>%
+  group_by(brand, scenario)  %>%
+  summarise(median_price = median(price)) %>%
+  arrange(-median_price)
+
+price_graph <- table %>%
+  ggplot(aes(x = reorder(scenario, median_price), y = median_price, fill = reorder(brand, median_price) )) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = TRUE) +
+  clean_theme +
+  labs(title = "With Promo, Small Ad is the only scenario \nwhere Kelloggs has a higher median price \nthan General Mills",
+       subtitle = "In all other scenarios, General Mills' median price is the same or higher \nthan the other brands",
+       y = "Total Revenue", x = "") +
+  coord_flip() +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_text(aes(label= dollar(median_price)), position=position_dodge(width=0.9), hjust =1, vjust=.5,size=4, 
+            colour="black") +
+  scale_fill_manual(values = c("#ADD8E6","#2b8cbe",  "#a6bddb"), breaks = c("KELLOGGS", "GENERAL MILLS", "POST"))+
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.x = element_text(color = "#808080"),
+        axis.title.x = element_text(color = "#808080"),
+        axis.text.y = element_text(color = c("#808080", "#ff0000", "#808080", "#808080", "#808080", "#808080")))
+price_graph
+```
+
+```{r}
+ggsave(filename = "price_graph.png", plot = price_graph)
+```
+
+
+
+```{r}
+
+flavors <- gm_joined_data %>%
+  filter(brand =="GENERAL MILLS" ) %>%
+  group_by(flavor, promo) %>%
+  summarise(average_units = median(units),
+            average_price = median(price),
+            average_rev = average_units*average_price,
+            rev = units*price,
+            total_revenue = sum(units*price)) %>%
+  mutate(promo = case_when(
+    promo == 0 ~ "No Promo",
+    promo == 1 ~ "Promo")) %>%
+  ungroup()
+
+b <- flavors %>%
+  ggplot(aes(x = reorder(flavor,total_revenue), y = total_revenue, fill = promo)) +
+  geom_bar(stat = "identity", position ="dodge") +
+  clean_theme + 
+  scale_y_continuous(labels=scales::dollar_format()) +
+  labs(title = "Cocoa flavor generated the lowest revenue",
+       subtitle = "Cocoa flavor generated in $26,257 in total revenue for General Mills",
+       y = "Total Revenue", x = "") + 
+  scale_fill_manual(values = c("#ADD8E6", "#a6bddb"), breaks = c("Promo", "No Promo")) +
+  geom_text(aes(label= dollar(total_revenue)), position=position_dodge(width=0.9), vjust=1.25,size=4, 
+            colour="black") +
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.title.x = element_text(color = "#808080"),
+        axis.title.y = element_text(color = "#808080"),
+        axis.line.x = element_blank(), 
+        axis.text.y = element_blank()) 
+
+b
+
+
+```
+
+
+
+```{r}
+ggsave(filename = "b.png", plot = b)
+```
+
+
+```{r}
+a <- flavors %>%
+  ggplot(aes(x = reorder(flavor, total_revenue), y = average_rev, fill = promo)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  clean_theme +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  labs(title = "Despite generating the lowest revenue, \nCocoa and Toasted flavors return the highest median promotion revenue",
+       subtitle = "There is a 45.88% increase in median revenue for \ncocoa flavored products when there is a promotion ",
+       y = "Average Revenue", x = "") +
+  geom_text(aes(label= dollar(average_rev)), position=position_dodge(width=0.9), vjust=1.5,size=4, 
+            colour="black") +
+  scale_fill_manual(values = c("#ADD8E6", "#a6bddb"), breaks = c("Promo", "No Promo")) +
+  theme(plot.subtitle = element_text(color = "#808080"),
+        axis.text.x= element_text(color = c("blue", "blue", "#808080", "#808080")),
+        axis.title.y = element_text(color = "#808080"),
+        axis.line.x = element_blank(), 
+        axis.text.y = element_blank()) 
+a
+```
+
+```{r}
+ggsave(filename = "a.png", plot = a)
+```
